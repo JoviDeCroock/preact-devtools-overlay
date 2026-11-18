@@ -47,7 +47,14 @@ export async function mountSignalsPane(
 		container.appendChild(hint);
 	}
 
-	const adapter = createDirectAdapter({ targetWindow: win });
+	// The client has been recording signal updates since page load; the relay
+	// replays them, so the pane also shows what happened before it opened.
+	const store = win.__PREACT_DEVTOOLS_OVERLAY__?.signals;
+	// In case it was (re)defined in a way our watcher couldn't see.
+	store?.sync(win);
+	const adapter = createDirectAdapter({
+		targetWindow: store ? store.relayWindow(win) : win,
+	});
 	const unmount = await mount({ adapter, container });
 
 	// Show the options the page actually configured instead of the panel's

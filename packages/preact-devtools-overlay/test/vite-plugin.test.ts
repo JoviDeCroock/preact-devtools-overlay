@@ -4,9 +4,15 @@ import { preactDevtoolsOverlay, type PreactDevtoolsOverlayOptions } from "../src
 
 const ENTRY_URL = "/@preact-devtools-overlay/entry.js";
 
-async function entryFor(options: PreactDevtoolsOverlayOptions = {}, root = process.cwd()) {
+const CONFIG_URL = "/@preact-devtools-overlay/config.js";
+
+async function entryFor(
+	options: PreactDevtoolsOverlayOptions = {},
+	root = process.cwd(),
+	command: "serve" | "build" = "serve",
+) {
 	const plugin = preactDevtoolsOverlay(options) as any;
-	const config = plugin.config({ root }, { command: "serve", mode: "development" });
+	const config = plugin.config({ root }, { command, mode: "development" });
 	const ctx = {
 		resolve: async (id: string) =>
 			id === "@preact/signals-debug" ? { id: "/abs/signals-debug.mjs" } : null,
@@ -70,6 +76,24 @@ describe("preactDevtoolsOverlay()", () => {
 			overlay: { open: true, tab: "signals" },
 		});
 		expect(code).toContain(`mountOverlay({"open":true,"tab":"signals"})`);
+	});
+
+	it("configures the agent API before the client loads", async () => {
+		const { code, plugin } = await entryFor({ signals: false });
+		expect(code.indexOf(CONFIG_URL)).toBeGreaterThan(-1);
+		expect(code.indexOf(CONFIG_URL)).toBeLessThan(code.indexOf("client.js"));
+		const config = await plugin.load(plugin.resolveId(CONFIG_URL));
+		expect(config).toBe(`window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = {"agentApi":true};\n`);
+	});
+
+	it("turns the agent API off in builds unless asked for", async () => {
+		const configFor = async (options: PreactDevtoolsOverlayOptions, command: "serve" | "build") => {
+			const { plugin } = await entryFor({ signals: false, ...options }, process.cwd(), command);
+			return plugin.load(plugin.resolveId(CONFIG_URL));
+		};
+		expect(await configFor({ apply: "always" }, "build")).toContain(`"agentApi":false`);
+		expect(await configFor({ apply: "always", agentApi: true }, "build")).toContain(`"agentApi":true`);
+		expect(await configFor({ agentApi: false }, "serve")).toContain(`"agentApi":false`);
 	});
 
 	it("auto-detects signals from the project root", async () => {

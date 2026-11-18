@@ -9,6 +9,11 @@ in a single in-page panel. No browser extension needed.
 - **Signals**: the signals devtools UI (updates, performance insights,
   timeline, dependency graph).
 
+- **Agent API**: the same information as data on
+  `window.__PREACT_DEVTOOLS_OVERLAY__.api`, for AI coding agents and
+  scripts, including why every component rendered. See
+  [Agent API](#agent-api).
+
 It ships as a `<preact-devtools-overlay>` web component plus a Vite plugin
 that wires everything up.
 
@@ -56,10 +61,45 @@ preactDevtoolsOverlay({
 	signals: "auto",
 	// signals-debug logs every update to the console by default. Default: false
 	signalsConsoleLogging: false,
-	// false to only install the hooks, or the initial UI state.
+	// Expose window.__PREACT_DEVTOOLS_OVERLAY__.api and record renders.
+	// Default: true on the dev server, false in builds.
+	agentApi: true,
+	// false to only install the hooks (the agent API keeps working),
+	// or the initial UI state.
 	overlay: { open: false, tab: "components", position: "bottom-right" },
 });
 ```
+
+## Agent API
+
+Coding agents drive the browser through Playwright, CDP or an MCP server.
+They can't do much with a virtualized tree or an SVG graph, so the client
+also exposes the devtools as plain data:
+
+```js
+const api = window.__PREACT_DEVTOOLS_OVERLAY__.api;
+api.getTree({ format: "text" });          // indented component tree
+api.inspect("[data-testid=save]");        // props, state, hooks, signals, source location
+const since = api.mark();
+// …click something…
+api.getRenders({ since, format: "text" });
+// [20] commit 4: TodoItem #1942 props (todo.done: false → true) 0ms
+api.getSignals({ format: "text" });       // values and which components read them
+api.update("Counter", "hook", 0, 41);     // edit state to test a hypothesis
+```
+
+Renders (with the reason: `mount`, `signal`, `hooks`, `state`, `props`,
+`parent` or `force`, plus the values that changed) and signal updates are
+recorded from page load, before any panel is opened. `api.help()` lists
+every method. [`AGENTS.md`](./packages/preact-devtools-overlay/AGENTS.md)
+(also shipped in the npm package) has copy-paste recipes; point your agent
+at it.
+
+For agent and CI runs, pass `overlay: false` to keep the launcher button out
+of screenshots and away from clicks. Recording renders adds a little work to
+every commit. Turn it off with `agentApi: false`. Without Vite, set
+`window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = { agentApi: false }` before the
+client loads.
 
 ## Usage without Vite
 
@@ -138,7 +178,12 @@ parts.
   the page's root font size. The only
   thing added to the page's own `<head>` is the stylesheet for the element
   highlighter that preact-devtools draws over your app.
-- Both panes are code-split and only load when first opened.
+- Both panes are code-split and only load when first opened. The client
+  subscribes to `@preact/signals-debug` right away, so the Signals pane
+  still shows the updates from before it was opened.
+- The agent API keeps its own copy of the component tree, decoded from the
+  same messages the Components pane receives. It also adds `options` hooks
+  next to the adapter's to record why each component rendered.
 
 ## Upstream code
 

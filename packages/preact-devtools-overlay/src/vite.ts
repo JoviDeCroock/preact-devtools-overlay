@@ -44,6 +44,13 @@ export interface PreactDevtoolsOverlayOptions {
 	 */
 	signalsConsoleLogging?: boolean;
 	/**
+	 * Expose `window.__PREACT_DEVTOOLS_OVERLAY__.api` (component tree, render
+	 * log with reasons, signals) for AI coding agents and scripts. Recording
+	 * renders costs a little on every commit. Defaults to `true` on the dev
+	 * server and `false` when the overlay is included in a build.
+	 */
+	agentApi?: boolean;
+	/**
 	 * Mount the overlay UI. Pass `false` to only install the hooks (e.g. to
 	 * mount `<preact-devtools-overlay>` yourself), or an object to configure
 	 * the initial state.
@@ -59,6 +66,8 @@ export interface PreactDevtoolsOverlayOptions {
 
 const ENTRY_URL = "/@preact-devtools-overlay/entry.js";
 const ENTRY_ID = "\0preact-devtools-overlay:entry";
+const CONFIG_URL = "/@preact-devtools-overlay/config.js";
+const CONFIG_ID = "\0preact-devtools-overlay:config";
 
 const distDir = path.dirname(fileURLToPath(import.meta.url));
 const clientFile = path.join(distDir, "client.js");
@@ -90,6 +99,7 @@ export function preactDevtoolsOverlay(
 	} = options;
 
 	let enableSignals = signals === true;
+	let agentApi = options.agentApi ?? true;
 
 	return {
 		name: "preact-devtools-overlay",
@@ -98,7 +108,8 @@ export function preactDevtoolsOverlay(
 				? undefined
 				: (_, env) => env.command === apply,
 
-		config(userConfig) {
+		config(userConfig, env) {
+			agentApi = options.agentApi ?? env.command === "serve";
 			if (signals === "auto") {
 				const root = path.resolve(userConfig.root ?? process.cwd());
 				enableSignals =
@@ -123,12 +134,19 @@ export function preactDevtoolsOverlay(
 
 		resolveId(id) {
 			if (id === ENTRY_URL) return ENTRY_ID;
+			if (id === CONFIG_URL) return CONFIG_ID;
 		},
 
 		async load(id) {
+			if (id === CONFIG_ID) {
+				// Its own module: imports are evaluated in order, so this runs
+				// before the client reads the config.
+				return `window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = ${JSON.stringify({ agentApi })};\n`;
+			}
 			if (id !== ENTRY_ID) return;
 
 			const lines = [
+				`import ${JSON.stringify(CONFIG_URL)};`,
 				`import ${JSON.stringify(toPosix(clientFile))};`,
 			];
 			if (preactDebug) lines.push(`import "preact/debug";`);

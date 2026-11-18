@@ -26,6 +26,20 @@ describe("preact-devtools-overlay/client", () => {
 		delete window.__PREACT_DEVTOOLS_OVERLAY__;
 	});
 
+	it("exposes the agent API unless disabled", async () => {
+		await loadClient();
+		expect(typeof window.__PREACT_DEVTOOLS_OVERLAY__!.api!.getTree).toBe("function");
+		delete window.__PREACT_DEVTOOLS__;
+		delete window.__PREACT_DEVTOOLS_OVERLAY__;
+		window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = { agentApi: false };
+		try {
+			await loadClient();
+			expect(window.__PREACT_DEVTOOLS_OVERLAY__!.api).toBeUndefined();
+		} finally {
+			delete window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__;
+		}
+	});
+
 	it("installs the hook and buffers attach events", async () => {
 		await loadClient();
 		expect(typeof window.__PREACT_DEVTOOLS__.attachPreact).toBe("function");

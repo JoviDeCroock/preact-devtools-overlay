@@ -1,12 +1,14 @@
-import { render } from "preact";
+import { Component, render } from "preact";
 import { useState } from "preact/hooks";
 import { signal, computed, useSignal } from "@preact/signals";
 
 const todos = signal([
 	{ id: 1, text: "Inspect a component", done: false },
 	{ id: 2, text: "Watch a signal update", done: true },
-]);
-const remaining = computed(() => todos.value.filter(t => !t.done).length);
+], { name: "todos" });
+const remaining = computed(() => todos.value.filter(t => !t.done).length, {
+	name: "remaining",
+});
 
 function Counter() {
 	const [count, setCount] = useState(0);
@@ -24,6 +26,44 @@ function SignalCounter() {
 			Signal count: {count}
 		</button>
 	);
+}
+
+interface StopwatchProps {
+	label: string;
+}
+interface StopwatchState {
+	running: boolean;
+	seconds: number;
+}
+
+class Stopwatch extends Component<StopwatchProps, StopwatchState> {
+	state: StopwatchState = { running: false, seconds: 0 };
+	timer: ReturnType<typeof setInterval> | undefined;
+
+	toggle = () => {
+		if (this.state.running) {
+			clearInterval(this.timer);
+		} else {
+			this.timer = setInterval(
+				() => this.setState(s => ({ seconds: s.seconds + 1 })),
+				1000,
+			);
+		}
+		this.setState(s => ({ running: !s.running }));
+	};
+
+	componentWillUnmount() {
+		clearInterval(this.timer);
+	}
+
+	render() {
+		return (
+			<button data-testid="stopwatch" onClick={this.toggle}>
+				{this.props.label}: {this.state.seconds}s{" "}
+				{this.state.running ? "(stop)" : "(start)"}
+			</button>
+		);
+	}
 }
 
 function TodoItem({ todo }: { todo: { id: number; text: string; done: boolean } }) {
@@ -62,6 +102,7 @@ function App() {
 			</p>
 			<Counter />
 			<SignalCounter />
+			<Stopwatch label="Class stopwatch" />
 			<h2>Todos ({remaining} remaining)</h2>
 			<ul>
 				{todos.value.map(t => (

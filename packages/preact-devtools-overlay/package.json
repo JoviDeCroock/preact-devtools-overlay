@@ -31,7 +31,8 @@
 	"files": [
 		"dist",
 		"vendor/*/LICENSE",
-		"README.md"
+		"README.md",
+		"AGENTS.md"
 	],
 	"scripts": {
 		"build": "node build.mjs",

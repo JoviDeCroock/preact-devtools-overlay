@@ -1,7 +1,21 @@
 import { PageHookName } from "../vendor/preact-devtools/src/constants";
+import type { AgentApi } from "./agent/api.js";
+import type { SignalsStore } from "./agent/signals.js";
 
 /** Global set by `preact-devtools-overlay/client`. */
 export const OVERLAY_GLOBAL = "__PREACT_DEVTOOLS_OVERLAY__";
+
+/**
+ * Read by `preact-devtools-overlay/client` when it installs. Must be set
+ * before the client runs; the Vite plugin does that for you.
+ */
+export interface OverlayClientConfig {
+	/**
+	 * Expose the agent API (`__PREACT_DEVTOOLS_OVERLAY__.api`) and record
+	 * renders for it. Defaults to `true`.
+	 */
+	agentApi?: boolean;
+}
 
 export interface OverlayClientState {
 	/** Package version of the client that installed the hook. */
@@ -37,6 +51,13 @@ export interface OverlayClientState {
 	 * show (and on "Apply", re-send) its hard-coded defaults.
 	 */
 	signalsDebugConfig?: { consoleLogging: boolean };
+	/**
+	 * History of `@preact/signals-debug` updates since page load. The Signals
+	 * pane replays it when it connects.
+	 */
+	signals?: SignalsStore;
+	/** The agent API, unless disabled with `agentApi: false`. */
+	api?: AgentApi;
 }
 
 /** Upper bound for `reloadSession.events`, so a never-opened panel can't grow it forever. */
@@ -46,6 +67,7 @@ declare global {
 	interface Window {
 		__PREACT_DEVTOOLS__?: any;
 		__PREACT_DEVTOOLS_OVERLAY__?: OverlayClientState;
+		__PREACT_DEVTOOLS_OVERLAY_CONFIG__?: OverlayClientConfig;
 		__PREACT_SIGNALS_DEVTOOLS__?: unknown;
 	}
 }

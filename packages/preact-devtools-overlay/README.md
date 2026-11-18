@@ -24,6 +24,11 @@ Entry points:
   `PreactDevtoolsOverlay`
 - `preact-devtools-overlay/auto`: mounts the overlay once the DOM is ready
 
+On the dev server, the devtools are also available as data for coding
+agents on `window.__PREACT_DEVTOOLS_OVERLAY__.api`: the component tree,
+inspection, why each component rendered, and signals. See `AGENTS.md` in
+this package for recipes.
+
 See the repository README for usage without Vite, options, and how it works.
 Contains code vendored from preactjs/preact-devtools and preactjs/signals
 (MIT), see `vendor/*/LICENSE`.
