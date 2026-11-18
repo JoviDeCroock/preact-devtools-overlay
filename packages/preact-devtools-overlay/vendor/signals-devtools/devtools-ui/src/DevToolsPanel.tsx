@@ -39,8 +39,6 @@ export function DevToolsPanel({
 	const activeTab = useSignal<PanelTab>(initialTab);
 
 	return (
-		// Set declaratively so the stored theme also applies on first render
-		// (ThemeModel's effect runs before this element exists).
 		<div
 			className="signals-devtools"
 			data-theme={themeStore.resolvedTheme.value}

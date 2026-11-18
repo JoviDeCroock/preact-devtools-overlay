@@ -12,8 +12,9 @@ import { shellStyles } from "./shell-styles.js";
 import { CONTAINER_RESIZE_EVENT } from "./shared.js";
 import type { PreactPane } from "./panes/preact.js";
 import type { SignalsPane } from "./panes/signals.js";
+import type { InsightsBridge, InsightsPane } from "./panes/insights.js";
 
-export type OverlayTab = "components" | "signals";
+export type OverlayTab = "components" | "signals" | "insights";
 export type OverlayPosition =
 	| "bottom-right"
 	| "bottom-left"
@@ -23,6 +24,7 @@ export type OverlayPosition =
 const TABS: Array<{ id: OverlayTab; label: string }> = [
 	{ id: "components", label: "Components" },
 	{ id: "signals", label: "Signals" },
+	{ id: "insights", label: "Insights" },
 ];
 const POSITIONS: OverlayPosition[] = [
 	"bottom-right",
@@ -62,7 +64,7 @@ function writeState(patch: PersistedState) {
 }
 
 function isTab(v: unknown): v is OverlayTab {
-	return v === "components" || v === "signals";
+	return v === "components" || v === "signals" || v === "insights";
 }
 
 /** Base class that is safe to reference during SSR. */
@@ -81,6 +83,9 @@ export class PreactDevtoolsOverlay extends BaseElement {
 	#paneHosts = new Map<OverlayTab, HTMLElement>();
 	#preactPane: PreactPane | null = null;
 	#signalsPane: Promise<SignalsPane | null> | null = null;
+	#insightsPane: InsightsPane | null = null;
+	/** Bumped to cancel a pending "select in Components" retry. */
+	#selectRequest = 0;
 	#destroyed = false;
 	#height = 0;
 	/** Set once `open` was assigned explicitly, so persisted state won't override it. */
@@ -190,6 +195,9 @@ export class PreactDevtoolsOverlay extends BaseElement {
 		this.#cleanup = [];
 		this.#preactPane?.destroy();
 		this.#preactPane = null;
+		this.#insightsPane?.destroy();
+		this.#insightsPane = null;
+		this.#selectRequest++;
 		const signals = this.#signalsPane;
 		this.#signalsPane = null;
 		signals?.then(p => p?.destroy());
@@ -371,7 +379,55 @@ export class PreactDevtoolsOverlay extends BaseElement {
 					return null;
 				});
 			this.#signalsPane = pending;
+		} else if (tab === "insights" && !this.#insightsPane) {
+			const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+			const placeholder: InsightsPane = { destroy() {} };
+			this.#insightsPane = placeholder;
+			import("./panes/insights.js")
+				.then(({ mountInsightsPane }) => {
+					if (this.#destroyed || this.#insightsPane !== placeholder) return;
+					this.#insightsPane = mountInsightsPane(root, window, this.#insightsBridge());
+				})
+				.catch(err => this.#showError(root, "Insights", err));
 		}
+	}
+
+	#insightsBridge(): InsightsBridge {
+		return {
+			selectedComponent: () => {
+				const id = this.#preactPane?.store?.selection.selected.value;
+				return typeof id === "number" && id >= 0 ? id : null;
+			},
+			showComponent: id => {
+				this.tab = "components";
+				this.#selectInComponents(id, ++this.#selectRequest);
+			},
+			showTab: tab => {
+				this.tab = tab;
+			},
+		};
+	}
+
+	/**
+	 * Selects a component in the Components tab once its pane has loaded and
+	 * received the tree, expanding collapsed ancestors so the row exists.
+	 */
+	#selectInComponents(id: number, request: number, tries = 40) {
+		if (this.#destroyed || request !== this.#selectRequest) return;
+		const store = this.#preactPane?.store;
+		const nodes = store?.nodes.value;
+		if (!store || !nodes?.has(id)) {
+			if (tries > 0) setTimeout(() => this.#selectInComponents(id, request, tries - 1), 50);
+			return;
+		}
+		const seen = new Set<number>();
+		for (let p = nodes.get(id)!.parent; nodes.has(p) && !seen.has(p); p = nodes.get(p)!.parent) {
+			seen.add(p);
+			if (store.collapser.collapsed.value.has(p)) store.collapser.collapseNode(p, false);
+		}
+		store.selection.selectById(id);
+		// What a click on the row does: load its props, hooks and so on.
+		store.notify("inspect", id);
 	}
 
 	#showError(root: ShadowRoot, name: string, err: unknown) {

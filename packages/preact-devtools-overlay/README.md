@@ -23,6 +23,15 @@ Entry points:
 - `preact-devtools-overlay`: `mountOverlay()`, `defineOverlayElement()`,
   `PreactDevtoolsOverlay`
 - `preact-devtools-overlay/auto`: mounts the overlay once the DOM is ready
+- `preact-devtools-overlay/mcp` and the `preact-devtools-overlay-mcp` bin:
+  stdio MCP server that reads the agent API of a tab open in the Vite dev
+  server
+
+On the dev server, the devtools are also available as data for coding
+agents on `window.__PREACT_DEVTOOLS_OVERLAY__.api`: the component tree,
+inspection, why each component rendered, and signals. See `AGENTS.md` in
+this package for recipes. Agents without a browser can use the MCP server:
+`claude mcp add preact-devtools -- npx preact-devtools-overlay-mcp`.
 
 See the repository README for usage without Vite, options, and how it works.
 Contains code vendored from preactjs/preact-devtools and preactjs/signals

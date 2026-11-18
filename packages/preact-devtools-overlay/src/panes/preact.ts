@@ -14,6 +14,7 @@ import { startProfiling } from "../../vendor/preact-devtools/src/view/components
 import sprite from "../../vendor/preact-devtools/src/view/sprite.svg?raw";
 import { createStyleElement } from "../styles-registry.js";
 import { isPageHookMessage } from "../shared.js";
+import { openInEditor, sourceOf } from "../editor.js";
 
 const SETTINGS_KEY = "preact-devtools-overlay:components-settings";
 
@@ -108,6 +109,9 @@ export function mountPreactPane(shadow: ShadowRoot, win: Window): PreactPane {
 			} else if (type === "inspect-host-node") {
 				if (hook?.$0) console.log("[preact-devtools] DOM node:", hook.$0);
 			} else if (type === "view-source") {
+				// On the dev server, open where it's rendered in the editor.
+				const source = typeof data === "number" ? sourceOf(data, win) : null;
+				if (source) openInEditor(source, win);
 				// The hook resolves `$type` in response to the message above,
 				// which is delivered asynchronously.
 				setTimeout(() => {

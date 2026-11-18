@@ -2,11 +2,7 @@
  * "Signals" pane: the upstream @preact/signals devtools UI, connected to
  * `@preact/signals-debug` running in the same window via the direct adapter.
  */
-import {
-	getContext,
-	mount,
-	setQueryRoot,
-} from "../../vendor/signals-devtools/devtools-ui/src/index";
+import { getContext, mount } from "../../vendor/signals-devtools/devtools-ui/src/index";
 import { createDirectAdapter } from "../../vendor/signals-devtools/devtools-adapter/src/index";
 import "../../vendor/signals-devtools/devtools-ui/src/styles.css";
 import { createStyleElement } from "../styles-registry.js";
@@ -33,9 +29,6 @@ export async function mountSignalsPane(
 	container.className = "pdo-root";
 	shadow.appendChild(container);
 
-	// Let the (patched) theme model find `.signals-devtools` in our shadow tree.
-	setQueryRoot(shadow);
-
 	// `mount()` waits (up to 10s) for `@preact/signals-debug` to show up
 	// before rendering anything. Explain what's going on in the meantime;
 	// `mount()` clears the container once it renders.
@@ -47,7 +40,14 @@ export async function mountSignalsPane(
 		container.appendChild(hint);
 	}
 
-	const adapter = createDirectAdapter({ targetWindow: win });
+	// The client has been recording signal updates since page load; the relay
+	// replays them, so the pane also shows what happened before it opened.
+	const store = win.__PREACT_DEVTOOLS_OVERLAY__?.signals;
+	// In case it was (re)defined in a way our watcher couldn't see.
+	store?.sync(win);
+	const adapter = createDirectAdapter({
+		targetWindow: store ? store.relayWindow(win) : win,
+	});
 	const unmount = await mount({ adapter, container });
 
 	// Show the options the page actually configured instead of the panel's
@@ -62,7 +62,6 @@ export async function mountSignalsPane(
 		destroy() {
 			// Also disconnects the adapter.
 			unmount();
-			setQueryRoot(null);
 			shadow.replaceChildren();
 		},
 	};

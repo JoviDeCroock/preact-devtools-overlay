@@ -31,9 +31,6 @@ export {
 	type HotspotTier,
 } from "./context";
 
-// Shadow DOM support
-export { setQueryRoot } from "./dom-root";
-
 // Types
 export type { GraphNode, GraphLink, GraphData } from "./types";
 

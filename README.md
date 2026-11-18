@@ -8,6 +8,15 @@ in a single in-page panel. No browser extension needed.
   editing, element picker, highlight updates, profiler, statistics).
 - **Signals**: the signals devtools UI (updates, performance insights,
   timeline, dependency graph).
+- **Insights**: why the selected component rendered, the signals it reads,
+  the provider of each context it consumes, and "Open in editor". Also
+  lists remounts (key problems), effects that outlived their component, and
+  every signal with its readers. It follows the Components tab's selection
+  and links back to it.
+- **Agent API**: the same information as data on
+  `window.__PREACT_DEVTOOLS_OVERLAY__.api`, for AI coding agents and
+  scripts, including why every component rendered, and an MCP server for
+  agents that can't drive a browser. See [Agent API](#agent-api).
 
 It ships as a `<preact-devtools-overlay>` web component plus a Vite plugin
 that wires everything up.
@@ -52,10 +61,132 @@ preactDevtoolsOverlay({
 	// `@preact/signals-core` is installed.
 	signals: "auto",
 	// signals-debug logs every update to the console by default. Default: false
+	// "compact": one plain line per update instead, e.g. for agents reading
+	// captured console output.
 	signalsConsoleLogging: false,
-	// false to only install the hooks, or the initial UI state.
+	// Expose window.__PREACT_DEVTOOLS_OVERLAY__.api and record renders.
+	// Default: true on the dev server, false in builds.
+	agentApi: true,
+	// Let the MCP server reach the API through the dev server (see below).
+	// Default: true when agentApi is on. Dev server only.
+	agentBridge: { allowRemote: false, allowUpdate: false, timeout: 10_000 },
+	// false to only install the hooks (the agent API keeps working),
+	// or the initial UI state. `?devtools=off` in the URL also skips the UI.
 	overlay: { open: false, tab: "components", position: "bottom-right" },
 });
+```
+
+## Agent API
+
+Coding agents drive the browser through Playwright, CDP or an MCP server.
+They can't do much with a virtualized tree or an SVG graph, so the client
+also exposes the devtools as plain data:
+
+```js
+const api = window.__PREACT_DEVTOOLS_OVERLAY__.api;
+api.getTree({ format: "text" });          // indented component tree
+api.inspect("[data-testid=save]");        // props, state, hooks, signals, source location
+const since = api.mark();
+// …click something…
+api.getRenders({ since, format: "text" });
+// [20] commit 4: TodoItem #1942 props (todo.done: false → true) 0ms
+api.getSignals({ format: "text" });       // every signal: value, subscribers, readers, creator
+api.getRemounts({ format: "text" });      // components remounted by unstable keys
+api.getLeaks({ format: "text" });         // effects that outlive their component
+api.update("Counter", "hook", 0, 41);     // edit state to test a hypothesis
+```
+
+Renders (with the reason: `mount`, `signal`, `hooks`, `state`, `props`,
+`context`, `parent` or `force`, plus the values that changed) and signal
+updates are recorded from page load, before any panel is opened. `api.help()` lists
+every method. [`AGENTS.md`](./packages/preact-devtools-overlay/AGENTS.md)
+(also shipped in the npm package) has copy-paste recipes; point your agent
+at it.
+
+For agent and CI runs, pass `overlay: false` (or open the page with
+`?devtools=off`) to keep the launcher button out of screenshots and away from
+clicks. Recording renders adds a little work to every component render: about
+1.5µs, or 8% (3ms) when re-rendering 2,000 components in the playground
+(`node playground/bench/agent-api.mjs`). Turn it off with `agentApi: false`. Without Vite, set
+`window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = { agentApi: false }` before the
+client loads.
+
+### MCP server, for agents without a browser
+
+An agent that can't drive a browser can still read the devtools of a page
+that someone has open. The package ships a stdio MCP server,
+`preact-devtools-overlay-mcp`. It asks the Vite dev server, and the dev
+server relays the call to the tab over its HMR websocket:
+
+```txt
+agent ─MCP─► preact-devtools-overlay-mcp ─HTTP─► vite dev server ─HMR websocket─► tab: api.getTree()
+```
+
+Claude Code, from the project directory:
+
+```sh
+claude mcp add preact-devtools -- npx preact-devtools-overlay-mcp
+```
+
+Or in `.mcp.json` (most other clients use the same shape):
+
+```json
+{
+	"mcpServers": {
+		"preact-devtools": {
+			"command": "npx",
+			"args": ["preact-devtools-overlay-mcp"]
+		}
+	}
+}
+```
+
+Tools: `list_tabs`, `get_tree`, `find`, `inspect`, `why_did_render`,
+`get_renders`, `mark`, `get_signals`, `get_signal_updates`,
+`get_signal_graph`, `get_leaks`, `get_remounts`, `status` and `update`.
+They return the compact text
+format by default.
+
+- **Finding the dev server.** On startup the dev server writes its URL, its
+  root and a random token to a file in your user's cache directory
+  (`~/.cache/preact-devtools-overlay/`, or `$XDG_CACHE_HOME`, or
+  `%LOCALAPPDATA%` on Windows), readable only by you. It's not in the
+  project, because Vite serves the project's files to anyone who can reach
+  it. The MCP server picks the running dev server whose root is its working
+  directory, a parent of it, or a subdirectory (for monorepos). Pass
+  `--root apps/web` to point it somewhere else, or `--url` and `--token`.
+  The file is read on every call, so restarting Vite is fine.
+- **Which tab.** Every page served by the dev server registers itself with
+  its URL, title, visibility and focus. Calls go to the most recently focused
+  visible tab. Every tool takes a `tab` argument: an id from `list_tabs`, or
+  part of the URL (`"/settings"`).
+- **Security.** The endpoints (`POST /__preact-devtools-overlay/api` and
+  `GET /__preact-devtools-overlay/tabs`) run code in your page, and the dev
+  server is reachable from your network with `--host`. So they need the
+  token, only accept connections from this machine, and refuse requests that
+  carry an `Origin` header (that is, requests from web pages). Only pages
+  served from this machine's dev server register as tabs: their `Origin` must
+  be `localhost`, a loopback address, `server.host` or one of
+  `server.allowedHosts`, so another site you visit can't pose as your app.
+  Other processes running on your machine are trusted, as Vite trusts them.
+  Set
+  `agentBridge: { allowRemote: true }` to accept both from the network; the
+  token is still required. `update()` changes app state, so the bridge
+  refuses it unless you set `agentBridge: { allowUpdate: true }`.
+  `agentBridge: false` turns the endpoints off.
+- **Limits.** The page must be open, and answer within 10 seconds
+  (`agentBridge.timeout`); a tab paused in the debugger or frozen in the
+  background times out. With `server.https`, Node has to trust the
+  certificate (`NODE_EXTRA_CA_CERTS`). In Vite's middleware mode the dev
+  server doesn't know its URL, so pass `--url`.
+
+Without MCP, any HTTP client works:
+
+```sh
+TOKEN=$(node --input-type=module -e 'import { findServerInfo } from "preact-devtools-overlay/mcp"; console.log(findServerInfo(process.cwd()).info.token)')
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5173/__preact-devtools-overlay/api \
+	-d '{ "method": "getTree", "args": [{ "format": "text" }] }'
+# { "ok": true, "result": "App #1938\n  Counter #1939\n…", "tab": { "id": "1", "url": "http://localhost:5173/", … } }
 ```
 
 ## Usage without Vite
@@ -73,11 +204,13 @@ Then put this at the very top of your entry file:
 
 ```ts
 // Must come first: installs window.__PREACT_DEVTOOLS__.
-import { configureSignalsDebug } from "preact-devtools-overlay/client";
+import { configureSignalsDebug, trackSignals } from "preact-devtools-overlay/client";
 import "preact/debug";
 // Only if you use signals:
 import { setDebugOptions } from "@preact/signals-debug";
+import { Signal, computed, effect } from "@preact/signals";
 configureSignalsDebug(setDebugOptions, { consoleLogging: false });
+trackSignals(Signal, effect, computed); // signal inventory and leak checks (agent API)
 
 import "preact-devtools-overlay/auto"; // mounts the overlay UI
 ```
@@ -97,7 +230,7 @@ overlay.toggle();
 
 `<preact-devtools-overlay>` can also be used as plain HTML once
 `defineOverlayElement()` has been called. It supports the `open`, `tab`
-(`components` | `signals`) and `position` (`bottom-right` | `bottom-left` |
+(`components` | `signals` | `insights`) and `position` (`bottom-right` | `bottom-left` |
 `top-right` | `top-left`) attributes and exposes `launcher` and `drawer` CSS
 parts.
 
@@ -135,21 +268,27 @@ parts.
   the page's root font size. The only
   thing added to the page's own `<head>` is the stylesheet for the element
   highlighter that preact-devtools draws over your app.
-- Both panes are code-split and only load when first opened.
+- Both panes are code-split and only load when first opened. The client
+  subscribes to `@preact/signals-debug` right away, so the Signals pane
+  still shows the updates from before it was opened.
+- The agent API keeps its own copy of the component tree, decoded from the
+  same messages the Components pane receives. It also adds `options` hooks
+  next to the adapter's to record why each component rendered.
+  `trackSignals()` adds a setter on the prototypes of signals-core's
+  `Signal`, `Computed` and `Effect` for the first field their constructors
+  assign. It runs once per instance, registers it (weakly) and turns into a
+  plain property. That gives the full signal inventory and tells which
+  component created which effect.
 
 ## Upstream code
 
 The devtools UIs are vendored from upstream at pinned commits (see
 [`upstream.json`](./upstream.json)) into
-`packages/preact-devtools-overlay/vendor/`, with a few small patches for
-Shadow DOM support in [`patches/`](./patches):
-
-| Patch | Why |
-| --- | --- |
-| `preact-devtools/0001-shadow-dom-support.patch` | The theme class was put on `document.body`, which can't style anything inside a shadow root. `useResize` also listens for a `preact-devtools:container-resize` event, so the virtualized tree re-measures when the drawer (not the window) changes size. |
-| `signals/0001-shadow-dom-support.patch` | The theme model used `document.querySelector`, which can't see into a shadow root, and it ran before the panel existed, so a stored theme wasn't applied on first render. The graph's click-outside handler used `e.target`, which is retargeted to the shadow host, so the export menu closed on any click. |
-
-`vendor/` is committed with the patches already applied.
+`packages/preact-devtools-overlay/vendor/`. Both upstreams support being
+embedded in a shadow root (preactjs/preact-devtools#527,
+preactjs/signals#1005), so there are currently no local patches. If one is
+needed again, put it in `patches/<name>/*.patch`. The sync script applies
+patches in lexical order, and `vendor/` is committed with them applied.
 
 ```sh
 # Update upstream: bump the ref in upstream.json, then
@@ -165,7 +304,10 @@ pnpm check-upstream           # (CI) verify vendor/ == upstream + patches
 
 - **"Inspect DOM node"** and **"View source"** need privileged devtools APIs
   (`inspect()`). The overlay logs the DOM node or component function to the
-  console instead, where the browser makes it clickable.
+  console instead, where the browser makes it clickable. On the Vite dev
+  server, "View source" also opens the place the component is rendered (its
+  JSX) in your editor, through Vite's `/__open-in-editor` (set
+  `LAUNCH_EDITOR` to pick the editor).
 - **Reload and profile / record stats** work, but the page reloads with the
   panel. The overlay reopens on its own and replays what the hook recorded
   in the meantime. Custom component filters aren't applied during that
@@ -188,7 +330,7 @@ pnpm build          # build the package
 pnpm dev            # watch-build the package + run the playground (/?rows=200 for a big tree)
 pnpm test           # unit tests (vitest)
 pnpm test:types     # strict consumer check of the published types
-pnpm test:e2e       # Playwright tests against the playground (Chromium + Firefox)
+pnpm test:e2e       # Playwright tests against the playground (Chromium + Firefox, port 5297 or $E2E_PORT)
 pnpm typecheck
 pnpm changeset      # describe a user-facing change (see .changeset/README.md)
 ```

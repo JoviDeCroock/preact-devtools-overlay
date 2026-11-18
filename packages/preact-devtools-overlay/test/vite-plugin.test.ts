@@ -1,12 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { STATE_DIR_ENV, serverInfoPath } from "../src/bridge/info";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { preactDevtoolsOverlay, type PreactDevtoolsOverlayOptions } from "../src/vite";
 
 const ENTRY_URL = "/@preact-devtools-overlay/entry.js";
 
-async function entryFor(options: PreactDevtoolsOverlayOptions = {}, root = process.cwd()) {
+const CONFIG_URL = "/@preact-devtools-overlay/config.js";
+
+async function entryFor(
+	options: PreactDevtoolsOverlayOptions = {},
+	root = process.cwd(),
+	command: "serve" | "build" = "serve",
+) {
 	const plugin = preactDevtoolsOverlay(options) as any;
-	const config = plugin.config({ root }, { command: "serve", mode: "development" });
+	const config = plugin.config({ root }, { command, mode: "development" });
 	const ctx = {
 		resolve: async (id: string) =>
 			id === "@preact/signals-debug" ? { id: "/abs/signals-debug.mjs" } : null,
@@ -70,6 +79,110 @@ describe("preactDevtoolsOverlay()", () => {
 			overlay: { open: true, tab: "signals" },
 		});
 		expect(code).toContain(`mountOverlay({"open":true,"tab":"signals"})`);
+	});
+
+	it("configures the agent API before the client loads", async () => {
+		const { code, plugin } = await entryFor({ signals: false });
+		expect(code.indexOf(CONFIG_URL)).toBeGreaterThan(-1);
+		expect(code.indexOf(CONFIG_URL)).toBeLessThan(code.indexOf("client.js"));
+		const config = await plugin.load(plugin.resolveId(CONFIG_URL));
+		expect(config).toBe(`window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = {"agentApi":true};\n`);
+	});
+
+	it("turns the agent API off in builds unless asked for", async () => {
+		const configFor = async (options: PreactDevtoolsOverlayOptions, command: "serve" | "build") => {
+			const { plugin } = await entryFor({ signals: false, ...options }, process.cwd(), command);
+			return plugin.load(plugin.resolveId(CONFIG_URL));
+		};
+		expect(await configFor({ apply: "always" }, "build")).toContain(`"agentApi":false`);
+		expect(await configFor({ apply: "always", agentApi: true }, "build")).toContain(`"agentApi":true`);
+		expect(await configFor({ agentApi: false }, "serve")).toContain(`"agentApi":false`);
+	});
+
+	it("points the client at Vite's open-in-editor endpoint on the dev server", async () => {
+		const configFor = async (command: "serve" | "build", base: string) => {
+			const { plugin } = await entryFor({ signals: false, apply: "always" }, process.cwd(), command);
+			plugin.configResolved({ command, base });
+			return plugin.load(plugin.resolveId(CONFIG_URL));
+		};
+		expect(await configFor("serve", "/app/")).toContain(`"openInEditor":"/app/__open-in-editor"`);
+		expect(await configFor("serve", "/")).toContain(`"openInEditor":"/__open-in-editor"`);
+		expect(await configFor("serve", "./")).toContain(`"openInEditor":"/__open-in-editor"`);
+		expect(await configFor("build", "/")).not.toContain("openInEditor");
+	});
+
+	it("tracks signal construction with the app's signals package", async () => {
+		const withSignals = path.resolve(import.meta.dirname, "../../../playground");
+		const { code, config } = await entryFor({}, withSignals);
+		expect(code).toContain(
+			`import { Signal as __pdoSignal, effect as __pdoEffect, computed as __pdoComputed } from "@preact/signals";`,
+		);
+		expect(code.indexOf("trackSignals(")).toBeGreaterThan(code.indexOf("configureSignalsDebug("));
+		expect(config.optimizeDeps.include).toContain("@preact/signals");
+		const { code: off } = await entryFor({ agentApi: false }, withSignals);
+		expect(off).not.toContain("trackSignals");
+	});
+
+	it("supports compact signals console logging", async () => {
+		const { code } = await entryFor({ signals: true, signalsConsoleLogging: "compact" });
+		expect(code).toContain(`{ consoleLogging: "compact" }`);
+	});
+
+	it("skips the overlay UI with ?devtools=off", async () => {
+		const { code } = await entryFor({ signals: false });
+		expect(code).toMatch(/if \(!\/\[\?&\]devtools=off\(&\|\$\)\/\.test\(location\.search\)\) import\(/);
+	});
+
+	it("connects the agent bridge on the dev server only", async () => {
+		const { code } = await entryFor({ signals: false });
+		expect(code).toMatch(/import \{ connectBridge \} from ".*bridge-client\.js";/);
+		expect(code).toContain(`if (import.meta.hot) connectBridge(import.meta.hot, {"allowUpdate":false});`);
+
+		const allowUpdate = await entryFor({ signals: false, agentBridge: { allowUpdate: true } });
+		expect(allowUpdate.code).toContain(`{"allowUpdate":true}`);
+
+		for (const [options, command] of [
+			[{ agentBridge: false }, "serve"],
+			[{ agentApi: false }, "serve"],
+			[{ apply: "always", agentApi: true }, "build"],
+		] as const) {
+			const { code } = await entryFor({ signals: false, ...options }, process.cwd(), command);
+			expect(code).not.toContain("connectBridge");
+		}
+	});
+
+	it("only adds the bridge endpoint when the bridge is on", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pdo-plugin-"));
+		vi.stubEnv(STATE_DIR_ENV, path.join(root, ".state"));
+		try {
+			const configure = (options: PreactDevtoolsOverlayOptions) => {
+				const plugin = preactDevtoolsOverlay(options) as any;
+				plugin.config({ root }, { command: "serve", mode: "development" });
+				const use = vi.fn();
+				const on = vi.fn();
+				plugin.configureServer({
+					config: { root, logger: { warn() {} }, server: {} },
+					middlewares: { use },
+					ws: { on, off() {} },
+					httpServer: null,
+				});
+				return { use, on };
+			};
+			for (const options of [{ agentBridge: false }, { agentApi: false }]) {
+				const { use, on } = configure(options);
+				expect(use).not.toHaveBeenCalled();
+				expect(on).not.toHaveBeenCalled();
+			}
+			const { use, on } = configure({});
+			expect(use).toHaveBeenCalledTimes(1);
+			expect(on).toHaveBeenCalledWith("connection", expect.any(Function));
+			// Middleware mode: no URL known, but the token is there.
+			const info = JSON.parse(fs.readFileSync(serverInfoPath(root), "utf8"));
+			expect(info).toMatchObject({ url: null, token: expect.any(String) });
+		} finally {
+			vi.unstubAllEnvs();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("auto-detects signals from the project root", async () => {

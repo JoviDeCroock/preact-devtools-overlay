@@ -87,3 +87,58 @@ test("remembers open state and tab across reloads", async ({ page }) => {
 	// Tree is requested from the hook after the app already rendered.
 	await expect(overlay(page).locator('[data-testid="tree-item"]').filter({ hasText: /^App$/ })).toBeVisible();
 });
+
+test("Insights explains the selected component and links back", async ({ page }) => {
+	await overlay(page).getByRole("button", { name: "Toggle Preact Devtools" }).click();
+	const tree = overlay(page).locator('[data-testid="tree-item"]');
+	await tree.filter({ hasText: /^Counter$/ }).click();
+	await page.getByTestId("counter").click();
+
+	await overlay(page).getByRole("tab", { name: "Insights" }).click();
+	const pane = overlay(page).locator("#pdo-pane-insights");
+	await expect(pane.getByText("<Counter>")).toBeVisible();
+	await expect(pane.getByText(/useState\[0\]: 0 → 1/).first()).toBeVisible();
+	await expect(pane.getByText(/src\/main\.tsx:\d+:\d+/)).toBeVisible();
+
+	// The open drawer can cover these buttons.
+	const press = (id: string) => page.getByTestId(id).dispatchEvent("click");
+
+	// Contexts name their provider, and the link focuses it.
+	await press("theme-toggle");
+	await pane.getByRole("button", { name: "ThemeLabel" }).first().click();
+	await expect(pane.getByText("<ThemeLabel>")).toBeVisible();
+	await expect(pane.getByText(/Theme = "dark"/)).toBeVisible();
+
+	// Leaks and remounts are listed app-wide.
+	await press("leaky-toggle");
+	await press("remount");
+	await expect(pane.getByText(/still running after it unmounted/)).toBeVisible();
+	await expect(pane.getByRole("button", { name: "App > RemountDemo > Inner" }).first()).toBeVisible();
+
+	// Back to the Components tab, with the component selected.
+	await pane.getByRole("button", { name: "Show in Components" }).click();
+	await expect(overlay(page).getByRole("tab", { name: "Components" })).toHaveAttribute("aria-selected", "true");
+	await expect(overlay(page).locator(".sidebar-actions").getByText("ThemeLabel")).toBeVisible();
+	// And inspected, like clicking its row: Counter's useState is gone.
+	await expect(overlay(page).locator("#pdo-pane-components").getByText("useContext")).toBeVisible();
+	await expect(overlay(page).locator("#pdo-pane-components").getByText("useState")).toHaveCount(0);
+});
+
+test("opens component sources in the editor through Vite", async ({ page }) => {
+	const opened: string[] = [];
+	// Don't launch a real editor.
+	await page.route(url => url.pathname.endsWith("/__open-in-editor"), route => {
+		opened.push(new URL(route.request().url()).searchParams.get("file")!);
+		return route.fulfill({ status: 200, body: "" });
+	});
+	await overlay(page).getByRole("button", { name: "Toggle Preact Devtools" }).click();
+	await overlay(page).locator('[data-testid="tree-item"]').filter({ hasText: /^Counter$/ }).click();
+	await overlay(page).getByTitle("View Component Source").click();
+	await expect.poll(() => opened.length).toBe(1);
+	expect(opened[0]).toMatch(/\/playground\/src\/main\.tsx:\d+:\d+$/);
+
+	await overlay(page).getByRole("tab", { name: "Insights" }).click();
+	await overlay(page).locator("#pdo-pane-insights").getByRole("button", { name: "Open in editor" }).click();
+	await expect.poll(() => opened.length).toBe(2);
+	expect(opened[1]).toBe(opened[0]);
+});

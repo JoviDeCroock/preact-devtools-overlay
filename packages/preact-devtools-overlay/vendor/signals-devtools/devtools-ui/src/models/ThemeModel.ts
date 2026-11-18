@@ -1,5 +1,4 @@
 import { signal, computed, effect, createModel } from "@preact/signals";
-import { getQueryRoot } from "../dom-root";
 
 export type ThemeMode = "auto" | "light" | "dark";
 
@@ -42,15 +41,6 @@ export const ThemeModel = createModel(() => {
 				: "light"
 			: theme.value
 	);
-
-	// Apply data-theme attribute to the devtools container
-	effect(() => {
-		const resolved = resolvedTheme.value;
-		const el = getQueryRoot().querySelector(".signals-devtools");
-		if (el instanceof HTMLElement) {
-			el.dataset.theme = resolved;
-		}
-	});
 
 	const toggleTheme = () => {
 		const order: ThemeMode[] = ["auto", "light", "dark"];

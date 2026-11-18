@@ -44,13 +44,21 @@
 			"types": "./dist/types/src/vite.d.ts",
 			"import": "./dist/vite.js"
 		},
+		"./mcp": {
+			"types": "./dist/types/src/mcp.d.ts",
+			"import": "./dist/mcp.js"
+		},
 		"./package.json": "./package.json"
+	},
+	"bin": {
+		"preact-devtools-overlay-mcp": "./dist/mcp-cli.js"
 	},
 	"files": [
 		"dist",
 		"vendor/*/LICENSE",
 		"LICENSE",
-		"README.md"
+		"README.md",
+		"AGENTS.md"
 	],
 	"scripts": {
 		"build": "node build.mjs",
