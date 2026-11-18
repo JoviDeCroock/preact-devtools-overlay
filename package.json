@@ -12,6 +12,13 @@
 		"sync-upstream": "node scripts/sync-upstream.mjs",
 		"check-upstream": "node scripts/sync-upstream.mjs --check",
 		"update-patches": "node scripts/sync-upstream.mjs --update-patches",
-		"test:types": "pnpm --filter preact-devtools-overlay test:types"
+		"test:types": "pnpm --filter preact-devtools-overlay test:types",
+		"changeset": "changeset",
+		"version": "changeset version",
+		"release": "pnpm build && changeset publish"
+	},
+	"devDependencies": {
+		"@changesets/changelog-github": "^0.6.0",
+		"@changesets/cli": "^3.0.3"
 	}
 }

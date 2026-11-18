@@ -23,9 +23,6 @@ that wires everything up.
 
 ## Usage with Vite
 
-> The package isn't published to npm yet (`"private": true`). Until it is,
-> use it from this repo, e.g. as a workspace or `git` dependency.
-
 ```sh
 pnpm add -D preact-devtools-overlay
 ```
@@ -335,7 +332,21 @@ pnpm test           # unit tests (vitest)
 pnpm test:types     # strict consumer check of the published types
 pnpm test:e2e       # Playwright tests against the playground (Chromium + Firefox, port 5297 or $E2E_PORT)
 pnpm typecheck
+pnpm changeset      # describe a user-facing change (see .changeset/README.md)
 ```
+
+### Releasing
+
+Releases go through [changesets](https://github.com/changesets/changesets):
+
+1. Every PR that changes the package adds a changeset (`pnpm changeset`).
+2. On `main`, the Release workflow keeps a "Version Packages" PR open that
+   bumps the version and writes `CHANGELOG.md`.
+3. Merging that PR runs the `publish` job in the `npm` environment (only
+   allowed from `main`). It *stages* the new version on npm via trusted
+   publishing (OIDC, no token) and creates the git tag and GitHub release.
+4. Approve the staged version with `npm stage approve <stage-id>` (the id is
+   in the job log).
 
 ## License
 

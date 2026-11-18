@@ -1,9 +1,27 @@
 {
 	"name": "preact-devtools-overlay",
-	"version": "0.1.0",
-	"private": true,
+	"version": "0.0.0",
 	"description": "Preact Devtools and Preact Signals Devtools in a single in-page web component, with a Vite plugin to inject it.",
+	"keywords": [
+		"preact",
+		"devtools",
+		"signals",
+		"preact-signals",
+		"vite",
+		"vite-plugin",
+		"web-component",
+		"debugging"
+	],
 	"license": "MIT",
+	"homepage": "https://github.com/JoviDeCroock/preact-devtools-overlay#readme",
+	"bugs": {
+		"url": "https://github.com/JoviDeCroock/preact-devtools-overlay/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/JoviDeCroock/preact-devtools-overlay",
+		"directory": "packages/preact-devtools-overlay"
+	},
 	"type": "module",
 	"sideEffects": [
 		"./dist/client.js",
@@ -38,6 +56,7 @@
 	"files": [
 		"dist",
 		"vendor/*/LICENSE",
+		"LICENSE",
 		"README.md",
 		"AGENTS.md"
 	],
@@ -45,7 +64,8 @@
 		"build": "node build.mjs",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
-		"test:types": "tsc -p test/types-consumer"
+		"test:types": "tsc -p test/types-consumer",
+		"prepublishOnly": "node build.mjs"
 	},
 	"dependencies": {
 		"@preact/signals-debug": "^1.5.0"
