@@ -1,6 +1,6 @@
 {
 	"name": "preact-devtools-overlay",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "Preact Devtools and Preact Signals Devtools in a single in-page web component, with a Vite plugin to inject it.",
 	"keywords": [
 		"preact",
