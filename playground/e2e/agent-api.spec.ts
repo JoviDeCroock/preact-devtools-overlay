@@ -38,7 +38,7 @@ test("inspects hooks, class state, signals and source locations", async ({ page 
 		const a = window.__PREACT_DEVTOOLS_OVERLAY__!.api!;
 		return [a.inspect("Counter"), a.inspect("[data-testid=stopwatch]"), a.inspect("SignalCounter")] as any[];
 	});
-	expect(counter.hooks).toEqual([{ hook: "useState", index: 0, value: 0, editable: true }]);
+	expect(counter.hooks).toEqual([{ hook: "useState", name: "count", index: 0, value: 0, editable: true }]);
 	expect(counter.source).toMatch(/src\/main\.tsx:\d+:\d+$/);
 	expect(stopwatch).toMatchObject({ props: { label: "Class stopwatch" }, state: { running: false, seconds: 0 } });
 	expect(signalCounter.hooks[0]).toMatchObject({ hook: "useSignal" });
@@ -56,7 +56,7 @@ test("explains why components rendered", async ({ page }) => {
 		mark,
 	);
 	const lines = (text as string).split("\n");
-	expect(lines[0]).toMatch(/Counter #\d+ hooks \(useState\[0\]: 0 → 1\)/);
+	expect(lines[0]).toMatch(/Counter #\d+ hooks \(count: 0 → 1\)/);
 	expect(lines[1]).toMatch(/Stopwatch #\d+ state \(running: false → true\)/);
 	expect(text).toMatch(/App #\d+ signal \(todos\[0\]\.done: false → true\)/);
 	expect(text).toMatch(/TodoItem #\d+ props \(todo\.done: false → true\)/);
@@ -64,7 +64,7 @@ test("explains why components rendered", async ({ page }) => {
 	const why = await page.evaluate(() =>
 		window.__PREACT_DEVTOOLS_OVERLAY__!.api!.whyDidRender("Counter", { last: 1 }),
 	);
-	expect(why).toMatchObject([{ name: "Counter", reason: "hooks", hooks: [{ key: "useState[0]", prev: 0, next: 1 }] }]);
+	expect(why).toMatchObject([{ name: "Counter", reason: "hooks", hooks: [{ key: "count", prev: 0, next: 1 }] }]);
 });
 
 test("records signal updates from page load, before any panel is open", async ({ page }) => {

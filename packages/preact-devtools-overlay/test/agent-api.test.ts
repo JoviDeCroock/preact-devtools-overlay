@@ -41,6 +41,75 @@ describe("agent API", () => {
 		container.remove();
 	});
 
+	it("names hooks after addHookName (the Vite plugin's hookNames transform)", async () => {
+		const { preact, hooks, api } = env;
+		const { addHookName } = await import("preact/devtools");
+		const { h, render } = preact;
+		let setOpen!: (open: boolean) => void;
+		let setCount!: (n: number) => void;
+		function Named() {
+			hooks.useEffect(() => {}, []);
+			// Not named at all (e.g. a hook called by a library): the adapter
+			// would give it the next name, "count".
+			hooks.useRef(null);
+			// What the transform does to calls it can't name.
+			addHookName(hooks.useMemo(() => 1, []), "");
+			const [count, setC] = addHookName(hooks.useState(0), "count");
+			const ref = addHookName(hooks.useRef(null), "ref");
+			const [open, setO] = addHookName(hooks.useState(false), "open");
+			const [unnamed] = hooks.useState("x");
+			setOpen = setO;
+			setCount = setC;
+			return h("p", { ref }, `${count} ${open} ${unnamed}`);
+		}
+		render(h(Named, null), container);
+
+		setOpen(true);
+		setCount(2);
+		await new Promise(r => setTimeout(r, 20));
+		expect(api.whyDidRender("Named", { last: 1 })).toMatchObject([
+			{
+				reason: "hooks",
+				hooks: [
+					{ key: "count", prev: 0, next: 2 },
+					{ key: "open", prev: false, next: true },
+				],
+			},
+		]);
+		const hooksInfo = (api.inspect("Named") as any).hooks;
+		expect(hooksInfo.slice(0, 5)).toMatchObject([
+			{ hook: "useEffect" },
+			{ hook: "useRef", index: 1 },
+			{ hook: "useMemo", index: 2 },
+			{ hook: "useState", name: "count", index: 3, value: 2 },
+			{ hook: "useRef", name: "ref", index: 4 },
+		]);
+		expect(hooksInfo[1]).not.toHaveProperty("name");
+		expect(hooksInfo[2]).not.toHaveProperty("name");
+	});
+
+	it("forgets hook names when an edit moves the hooks (prefresh)", async () => {
+		const { preact, hooks, api } = env;
+		const { addHookName } = await import("preact/devtools");
+		const { h, render } = preact;
+		let edited = false;
+		let rerender!: () => void;
+		function Moved() {
+			const [, force] = hooks.useReducer((n: number) => n + 1, 0);
+			rerender = force as () => void;
+			// Before the edit: a named ref. After: an unnamed one in its place.
+			if (!edited) addHookName(hooks.useRef(1), "ref");
+			else hooks.useRef(1);
+			return h("p", null, "moved");
+		}
+		render(h(Moved, null), container);
+		expect((api.inspect("Moved") as any).hooks[1]).toMatchObject({ hook: "useRef", name: "ref" });
+		edited = true;
+		rerender();
+		await new Promise(r => setTimeout(r, 20));
+		expect((api.inspect("Moved") as any).hooks[1]).not.toHaveProperty("name");
+	});
+
 	it("exposes the tree, render reasons and signals", async () => {
 		const { preact, hooks, signals, api } = env;
 		const { h, Component, render } = preact;

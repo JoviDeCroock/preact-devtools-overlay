@@ -61,8 +61,13 @@ await page.evaluate(() =>
 //   contexts: null, context: null }
 ```
 
-`hooks` lists `useState`/`useReducer`/`useSignal`/… values in call order.
-Custom hooks are listed with their children. `signals` lists every signal the
+`hooks` lists `useState`/`useReducer`/`useSignal`/… values in call order:
+`{ hook: "useState", name: "count", index: 0, value: 1 }`. Custom hooks are
+listed with their children. `name` is the variable the hook is assigned to,
+added by the Vite plugin (`hookNames`); without it, hooks only have an index.
+`inspect()` matches names to hooks by index. The Components tab's Hooks panel
+matches them by position, so a hook called inside a library can shift the
+names shown there. `signals` lists every signal the
 component read during its last render, with its current value. `contexts`
 lists the contexts it consumes (`useContext`, `contextType`) with their value
 and the provider that supplies it:
@@ -91,7 +96,7 @@ The reasons are:
 | --- | --- |
 | `mount` | First render. |
 | `signal` | A signal the component read changed. |
-| `hooks` | A `useState`/`useReducer` value changed. |
+| `hooks` | A `useState`/`useReducer` value changed. Keyed by the hook's variable name (`count: 0 → 1`), or `useState[<index>]` without the Vite plugin. |
 | `state` | Class component `state` changed. |
 | `props` | A prop changed value. |
 | `context` | A consumed context's value changed. |

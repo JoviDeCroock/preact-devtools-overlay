@@ -138,6 +138,7 @@ function install() {
 		let commit = 0;
 		const rendering = createRenderContext();
 		const registry = new SignalRegistry(rendering);
+		const hookNames = new WeakMap<object, Map<number, string>>();
 		state.registry = registry;
 		const attachPreact = hook?.attachPreact;
 		if (typeof attachPreact === "function") {
@@ -152,7 +153,12 @@ function install() {
 								/^11\./.test(String(version)) ? bindingsV11 : bindingsV10,
 								entries => entries.forEach(e => renders.push(e)),
 								() => ++commit,
-								{ rendering, onRerender: c => registry.rerendered(c), onUnmount: c => registry.unmounted(c) },
+								{
+									rendering,
+									hookNames,
+									onRerender: c => registry.rerendered(c),
+									onUnmount: c => registry.unmounted(c),
+								},
 							);
 						} catch (err) {
 							console.warn("[preact-devtools-overlay] agent API: could not record renders.", err);
@@ -175,6 +181,7 @@ function install() {
 			currentSeq: () => seq,
 			version: __PDO_VERSION__,
 			asyncTree: state.reusedExistingHook,
+			hookNames,
 		});
 	}
 

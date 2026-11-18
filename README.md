@@ -35,7 +35,7 @@ import { preactDevtoolsOverlay } from "preact-devtools-overlay/vite";
 
 export default defineConfig({
 	plugins: [
-		// The overlay plugin imports `preact/debug` itself.
+		// The overlay plugin imports `preact/debug` and names hooks itself.
 		preact({ devToolsEnabled: false }),
 		preactDevtoolsOverlay(),
 	],
@@ -56,6 +56,10 @@ preactDevtoolsOverlay({
 	apply: "serve",
 	// Import `preact/debug` for you. Default: true
 	preactDebug: true,
+	// Name useState/useReducer/useRef/useMemo hooks after their variable
+	// (`const [count] = useState(0)` → "count") in the Hooks panel and in
+	// render reasons. What preset-vite's `devToolsEnabled` does. Default: true
+	hookNames: true,
 	// Enable the Signals panel via `@preact/signals-debug`.
 	// "auto" (default) enables it when `@preact/signals` or
 	// `@preact/signals-core` is installed.

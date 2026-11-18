@@ -30,7 +30,7 @@ export interface RenderLogEntry {
 	reasons: RenderReason[];
 	props?: Change[];
 	state?: Change[];
-	/** Changed `useState`/`useReducer` values, keyed `useState[<hook index>]`. */
+	/** Changed `useState`/`useReducer` values, keyed by the hook's name (see the Vite plugin's `hookNames`), else `useState[<hook index>]`. */
 	hooks?: Change[];
 	/** Signals read during the previous render whose value changed since. */
 	signals?: Change[];

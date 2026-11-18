@@ -97,7 +97,7 @@ test("Insights explains the selected component and links back", async ({ page })
 	await overlay(page).getByRole("tab", { name: "Insights" }).click();
 	const pane = overlay(page).locator("#pdo-pane-insights");
 	await expect(pane.getByText("<Counter>")).toBeVisible();
-	await expect(pane.getByText(/useState\[0\]: 0 → 1/).first()).toBeVisible();
+	await expect(pane.getByText(/count: 0 → 1/).first()).toBeVisible();
 	await expect(pane.getByText(/src\/main\.tsx:\d+:\d+/)).toBeVisible();
 
 	// The open drawer can cover these buttons.

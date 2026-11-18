@@ -31,6 +31,8 @@ export interface RenderObserver {
 	rendering?: RenderContext;
 	onRerender?(component: object): void;
 	onUnmount?(component: object): void;
+	/** Filled with hook names (by component, then hook index). */
+	hookNames?: WeakMap<object, Map<number, string>>;
 }
 
 const CHANGE_LIMITS: ValueLimits = { depth: 2, breadth: 10, string: 120 };
@@ -143,6 +145,8 @@ export function instrumentRenders(
 	const prevCommit = o.__c;
 	const prevUnmount = options.unmount;
 	const prevCatchError = o.__e;
+	const prevHook = o.__h;
+	const prevHookName = o.__a;
 
 	const snapshots = new WeakMap<object, Snapshot>();
 	// Weak: a render that throws never reaches `diffed`, and its component
@@ -151,7 +155,42 @@ export function instrumentRenders(
 	let pending: RenderLogEntry[] = [];
 	const hasWeakRef = typeof WeakRef !== "undefined";
 
+	// Hook names, from `addHookName(useState(0), "count")` (injected by the
+	// Vite plugin or @preact/preset-vite). preact/hooks calls `options._hook`
+	// (`__h`) for each hook, then `addHookName` calls `options._addHookName`
+	// (`__a`) with the name: it belongs to the hook called last.
+	const hookNames = observer.hookNames ?? new WeakMap<object, Map<number, string>>();
+	let lastHookOwner: object | null = null;
+	let lastHookIndex = -1;
+	// The devtools adapter wraps both on the first render and must stay the
+	// outermost `__h` (it trims a fixed number of stack frames). If it already
+	// did (`__a` is set), leave hook names out rather than wrap it.
+	const trackHookNames = typeof prevHookName !== "function";
+	let active = true;
+
+	const hook = (c: any, index: number, type: number) => {
+		if (active) {
+			lastHookOwner = c;
+			lastHookIndex = index;
+		}
+		if (prevHook) prevHook(c, index, type);
+	};
+
+	const hookName = (name: unknown) => {
+		if (active && lastHookOwner) {
+			let names = hookNames.get(lastHookOwner);
+			if (!names) hookNames.set(lastHookOwner, (names = new Map()));
+			// "" marks a call the transform wrapped only to keep the adapter's
+			// positional names aligned.
+			if (name === "" || name == null) names.delete(lastHookIndex);
+			else names.set(lastHookIndex, String(name));
+			lastHookOwner = null;
+		}
+		if (typeof prevHookName === "function") prevHookName(name);
+	};
+
 	const notRendering = () => {
+		lastHookOwner = null;
 		if (rendering) {
 			rendering.component = null;
 			rendering.name = null;
@@ -174,10 +213,13 @@ export function instrumentRenders(
 	};
 
 	const render = (vnode: any, parent: any) => {
+		lastHookOwner = null;
 		const type = vnode.type;
 		if (typeof type === "function" && type !== config.Fragment) {
 			const c = bindings.getComponent(vnode);
 			if (c) {
+				// Named again as its hooks run (an edit may have moved them).
+				if (trackHookNames) hookNames.get(c)?.clear();
 				renderStart.set(c, performance.now());
 				if (rendering) {
 					const firstRender = !snapshots.has(c);
@@ -287,9 +329,11 @@ export function instrumentRenders(
 			}
 		}
 		const hookChanges: Change[] = [];
+		const names = hookNames.get(c);
 		for (const [index, value] of next.hooks) {
 			if (prev.hooks.has(index) && !Object.is(prev.hooks.get(index), value)) {
-				hookChanges.push(change(`useState[${index}]`, prev.hooks.get(index), value));
+				const key = names?.get(index) ?? `useState[${index}]`;
+				hookChanges.push(change(key, prev.hooks.get(index), value));
 			}
 		}
 		const stateChanges = prev.state || next.state ? shallowChanges(prev.state, next.state) : [];
@@ -366,6 +410,10 @@ export function instrumentRenders(
 	options.unmount = unmount;
 	// Preact always has one (it rethrows when no boundary catches).
 	if (rendering && typeof prevCatchError === "function") o.__e = catchError;
+	if (trackHookNames) {
+		o.__h = hook;
+		o.__a = hookName;
+	}
 
 	return {
 		teardown() {
@@ -376,6 +424,12 @@ export function instrumentRenders(
 			if (o.__c === commit) o.__c = prevCommit;
 			if (options.unmount === unmount) options.unmount = prevUnmount;
 			if (o.__e === catchError) o.__e = prevCatchError;
+			// Usually wrapped by now (the adapter, @preact/signals): only
+			// switched off then.
+			if (o.__h === hook) o.__h = prevHook;
+			if (o.__a === hookName) o.__a = prevHookName;
+			active = false;
+			lastHookOwner = null;
 		},
 	};
 }

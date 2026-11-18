@@ -79,7 +79,7 @@ test("relays agent API calls to the tab over the HMR websocket", async ({ page, 
 	const before = await callApi(request, { method: "mark", tab });
 	await page.getByTestId("counter").click();
 	const renders = await callApi(request, { method: "getRenders", args: [{ since: before.body.result, format: "text" }], tab });
-	expect(renders.body.result).toMatch(/Counter #\d+ hooks \(useState\[0\]: 0 → 1\)/);
+	expect(renders.body.result).toMatch(/Counter #\d+ hooks \(count: 0 → 1\)/);
 
 	// Errors thrown by the API come back as errors.
 	const missing = await callApi(request, { method: "inspect", args: ["NoSuchComponent"], tab });

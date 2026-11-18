@@ -54,6 +54,8 @@ export interface AgentApiDeps {
 	version: string;
 	/** `true` when the tree is fed asynchronously (extension's hook reused). */
 	asyncTree: boolean;
+	/** Hook names by component and hook index, recorded by the render log. */
+	hookNames?: WeakMap<object, Map<number, string>>;
 }
 
 const HELP = `preact-devtools-overlay agent API (window.__PREACT_DEVTOOLS_OVERLAY__.api)
@@ -730,7 +732,8 @@ export function createAgentApi(deps: AgentApiDeps) {
 		for (const child of node.children) treeToText(child, depth - 1, `${indent}  `, out);
 	}
 
-	function hooksToJson(data: any[] | null): unknown[] | null {
+	function hooksToJson(data: any[] | null, component: object | null): unknown[] | null {
+		const names = component ? deps.hookNames?.get(component) : undefined;
 		if (!Array.isArray(data)) return null;
 		const byId = new Map<string, any>(data.map(d => [d.id, d]));
 		const build = (id: string): unknown => {
@@ -738,8 +741,14 @@ export function createAgentApi(deps: AgentApiDeps) {
 			if (!d) return null;
 			const native = d.meta && typeof d.meta === "object" && "index" in d.meta;
 			if (native) {
+				// The adapter appends `addHookName` names ("useState count"), but
+				// hands them out by position, so a hook without one shifts the
+				// rest. The render log knows which hook index each belongs to.
+				const space = typeof d.name === "string" ? d.name.indexOf(" ") : -1;
+				const name = names?.get(d.meta.index);
 				return {
-					hook: d.name,
+					hook: space > 0 ? d.name.slice(0, space) : d.name,
+					...(name ? { name } : {}),
 					index: d.meta.index,
 					value: d.value === "__preact_empty__" ? undefined : fromSerialized(d.value),
 					...(d.editable ? { editable: true } : {}),
@@ -800,7 +809,7 @@ export function createAgentApi(deps: AgentApiDeps) {
 		if (opts.hooks !== false) {
 			try {
 				data = r.inspect(id);
-				hooks = hooksToJson(data?.hooks ?? null);
+				hooks = hooksToJson(data?.hooks ?? null, c ?? null);
 			} catch (err) {
 				hooks = `[Unreadable: ${err instanceof Error ? err.message : String(err)}]`;
 			}

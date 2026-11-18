@@ -23,6 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
 import { setupAgentBridge, type AgentBridgeOptions } from "./bridge/server.js";
+import { HOOK_NAMES_FILE, transformHookNames } from "./hook-names.js";
 
 declare const __PDO_VERSION__: string;
 
@@ -35,6 +36,14 @@ export interface PreactDevtoolsOverlayOptions {
 	apply?: "serve" | "build" | "always";
 	/** Import `preact/debug` for you. Defaults to `true`. */
 	preactDebug?: boolean;
+	/**
+	 * Name `useState`, `useReducer`, `useRef` and `useMemo` hooks after the
+	 * variable they're assigned to (`const [count] = useState(0)` → `count`),
+	 * in the Hooks panel and in render reasons. The same transform
+	 * @preact/preset-vite applies with `devToolsEnabled`. Applies to the
+	 * app's own files, not `node_modules`. Defaults to `true`.
+	 */
+	hookNames?: boolean;
 	/**
 	 * Enable the Signals panel by importing `@preact/signals-debug`.
 	 * `"auto"` (default) enables it when `@preact/signals` or
@@ -108,13 +117,14 @@ function hasPackage(dir: string, name: string): boolean {
 
 export function preactDevtoolsOverlay(
 	options: PreactDevtoolsOverlayOptions = {},
-): Plugin {
+): Plugin[] {
 	const {
 		apply = "serve",
 		preactDebug = true,
 		signals = "auto",
 		signalsConsoleLogging = false,
 		overlay = true,
+		hookNames = true,
 	} = options;
 
 	let enableSignals = signals === true;
@@ -132,12 +142,12 @@ export function preactDevtoolsOverlay(
 				: {};
 	const bridgeEnabled = () => serve && agentApi && bridgeOptions !== null;
 
-	return {
+	const applies: Plugin["apply"] =
+		apply === "always" ? undefined : (_, env) => env.command === apply;
+
+	const main: Plugin = {
 		name: "preact-devtools-overlay",
-		apply:
-			apply === "always"
-				? undefined
-				: (_, env) => env.command === apply,
+		apply: applies,
 
 		config(userConfig, env) {
 			serve = env.command === "serve";
@@ -165,6 +175,7 @@ export function preactDevtoolsOverlay(
 					// share the app's `preact` / `@preact/signals-core` instances.
 					include: [
 						...(preactDebug ? ["preact/debug"] : []),
+						...(hookNames ? ["preact/devtools"] : []),
 						...(enableSignals
 							? ["preact-devtools-overlay > @preact/signals-debug"]
 							: []),
@@ -270,6 +281,25 @@ export function preactDevtoolsOverlay(
 			},
 		},
 	};
+
+	if (!hookNames) return [main];
+
+	const names: Plugin = {
+		name: "preact-devtools-overlay:hook-names",
+		apply: applies,
+		// A plugin of its own for the order: after Vite compiled TypeScript and
+		// JSX away and after prefresh, whose HMR signatures read
+		// `const [a] = useState()` (a wrapped call would lose its `a`). Before
+		// Vite's import analysis, which only runs after `enforce: "post"`
+		// plugins, so the injected `preact/devtools` import still gets resolved.
+		enforce: "post",
+		transform(code, id) {
+			if (id.startsWith("\0") || id.includes("/node_modules/")) return;
+			if (!HOOK_NAMES_FILE.test(id.replace(/[?#].*$/, ""))) return;
+			return transformHookNames(code, source => this.parse(source)) ?? undefined;
+		},
+	};
+	return [main, names];
 }
 
 export default preactDevtoolsOverlay;
