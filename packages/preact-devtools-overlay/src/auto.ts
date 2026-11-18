@@ -3,7 +3,7 @@
  *
  *   import "preact-devtools-overlay/auto";
  */
-import { mountOverlay } from "./index";
+import { mountOverlay } from "./index.js";
 
 if (typeof document !== "undefined") {
 	if (document.readyState === "loading") {

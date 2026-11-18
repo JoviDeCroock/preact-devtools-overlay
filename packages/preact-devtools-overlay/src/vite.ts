@@ -149,7 +149,8 @@ export function preactDevtoolsOverlay(
 				} else {
 					lines.push(
 						`import { setDebugOptions } from ${JSON.stringify(debug.id)};`,
-						`setDebugOptions({ consoleLogging: ${!!signalsConsoleLogging} });`,
+						`import { configureSignalsDebug } from ${JSON.stringify(toPosix(clientFile))};`,
+						`configureSignalsDebug(setDebugOptions, { consoleLogging: ${!!signalsConsoleLogging} });`,
 					);
 				}
 			}

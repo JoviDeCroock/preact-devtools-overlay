@@ -45,7 +45,7 @@ test("picks a component from the page", async ({ page }) => {
 test("streams signal updates into the Signals tab", async ({ page }) => {
 	await page.keyboard.press("Alt+Shift+D");
 	await overlay(page).getByRole("tab", { name: "Signals" }).click();
-	await expect(overlay(page).getByText("Connected")).toBeVisible();
+	await expect(overlay(page).getByRole("tabpanel", { name: "Signals" }).getByText("Connected", { exact: true })).toBeVisible();
 
 	await page.getByTestId("signal-counter").click();
 	await page.getByTestId("signal-counter").click();
@@ -57,7 +57,7 @@ test("streams signal updates into the Signals tab", async ({ page }) => {
 test("does not leak styles into the page", async ({ page }) => {
 	await page.keyboard.press("Alt+Shift+D");
 	await overlay(page).getByRole("tab", { name: "Signals" }).click();
-	await expect(overlay(page).getByText("Connected")).toBeVisible();
+	await expect(overlay(page).getByRole("tabpanel", { name: "Signals" }).getByText("Connected", { exact: true })).toBeVisible();
 	const body = await page.evaluate(() => ({
 		className: document.body.className,
 		margin: getComputedStyle(document.body).margin,

@@ -42,8 +42,14 @@ describe("preactDevtoolsOverlay()", () => {
 		expect(client).toBeGreaterThan(-1);
 		expect(debug).toBeGreaterThan(client);
 		expect(signals).toBeGreaterThan(debug);
-		expect(code).toContain("setDebugOptions({ consoleLogging: false })");
+		// Both the live options and signals-debug's devtools copy of them.
+		expect(code).toContain("configureSignalsDebug(setDebugOptions, { consoleLogging: false })");
 		expect(code).toMatch(/import\(".*index\.js"\)\.then\(m => m\.mountOverlay\(\{\}\)\)/);
+	});
+
+	it("can keep signals console logging on", async () => {
+		const { code } = await entryFor({ signals: true, signalsConsoleLogging: true });
+		expect(code).toContain("{ consoleLogging: true }");
 	});
 
 	it("respects opt-outs", async () => {

@@ -69,7 +69,9 @@ function browserBuild(entry, outDirEmpty) {
 	};
 }
 
-fs.rmSync(r("dist"), { recursive: true, force: true });
+// In watch mode, keep the previous output around: a dev server consuming
+// dist/ (e.g. the playground) must never observe it missing.
+if (!watch) fs.rmSync(r("dist"), { recursive: true, force: true });
 
 await build(browserBuild({ client: r("src/client.ts") }, false));
 await build(

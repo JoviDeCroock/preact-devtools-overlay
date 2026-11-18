@@ -100,6 +100,26 @@ describe("<preact-devtools-overlay>", () => {
 		expect(el.open).toBe(true);
 	});
 
+	it("opens the Components pane for a reload-and-profile session", () => {
+		localStorage.setItem(
+			"preact-devtools-overlay:state",
+			JSON.stringify({ open: false, tab: "signals" }),
+		);
+		window.__PREACT_DEVTOOLS_OVERLAY__ = {
+			version: "test",
+			reusedExistingHook: false,
+			attachEvents: [],
+			reloadSession: { kind: "profile", events: [], truncated: false },
+		};
+		try {
+			const el = mountOverlay();
+			expect(el.open).toBe(true);
+			expect(el.tab).toBe("components");
+		} finally {
+			delete window.__PREACT_DEVTOOLS_OVERLAY__;
+		}
+	});
+
 	it("ignores unknown tab/position values", () => {
 		const el = mountOverlay();
 		el.setAttribute("tab", "nope");

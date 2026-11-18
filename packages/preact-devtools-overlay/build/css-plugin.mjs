@@ -10,6 +10,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { transform } from "lightningcss";
 
+/** Vite ids always use forward slashes, also on Windows. */
+const normalizePath = p => p.replaceAll("\\", "/");
+
 const PREFIX = "\0pdo-css:";
 const SUFFIX = ".js";
 
@@ -17,12 +20,13 @@ const SUFFIX = ".js";
  * @param {{ root: string }} options
  * @returns {import("vite").Plugin}
  */
-export function shadowCssPlugin({ root }) {
+export function shadowCssPlugin({ root: rawRoot }) {
+	const root = normalizePath(rawRoot);
 	const registry = path.join(root, "src", "styles-registry.ts");
 
 	/** @param {string} file */
 	function scopeFor(file) {
-		const rel = path.relative(root, file).split(path.sep).join("/");
+		const rel = path.posix.relative(root, normalizePath(file));
 		if (rel.startsWith("vendor/preact-devtools/")) return "preact";
 		if (rel.startsWith("vendor/signals-devtools/")) return "signals";
 		if (rel.startsWith("src/")) return "shell";
@@ -37,8 +41,10 @@ export function shadowCssPlugin({ root }) {
 			const resolved = await this.resolve(source, importer, {
 				skipSelf: true,
 			});
-			if (!resolved || !resolved.id.startsWith(root)) return null;
-			return PREFIX + resolved.id + SUFFIX;
+			if (!resolved) return null;
+			const id = normalizePath(resolved.id);
+			if (!id.startsWith(root + "/")) return null;
+			return PREFIX + id + SUFFIX;
 		},
 		async load(id) {
 			if (!id.startsWith(PREFIX)) return null;
@@ -57,6 +63,15 @@ export function shadowCssPlugin({ root }) {
 				minify: true,
 				sourceMap: false,
 				visitor: {
+					// A shadow root can't isolate `rem` from the page's root font
+					// size, and the upstream UIs use it heavily. Pin it to the
+					// browser default so the devtools look the same on every page.
+					Length(length) {
+						if (length.unit === "rem") {
+							return { unit: "px", value: length.value * 16 };
+						}
+						return length;
+					},
 					// Selectors that target the document (`:root`, `html`, `body`)
 					// can't match anything inside a shadow root. Point them at the
 					// shadow host instead.

@@ -35,11 +35,16 @@ export function DevToolsPanel({
 	hideHeader = false,
 	initialTab = "updates",
 }: DevToolsPanelProps = {}) {
-	const { connectionStore } = getContext();
+	const { connectionStore, themeStore } = getContext();
 	const activeTab = useSignal<PanelTab>(initialTab);
 
 	return (
-		<div className="signals-devtools">
+		// Set declaratively so the stored theme also applies on first render
+		// (ThemeModel's effect runs before this element exists).
+		<div
+			className="signals-devtools"
+			data-theme={themeStore.resolvedTheme.value}
+		>
 			{!hideHeader && <Header />}
 
 			<SettingsPanel />

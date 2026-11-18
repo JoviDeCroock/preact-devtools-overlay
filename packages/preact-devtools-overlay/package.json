@@ -36,7 +36,8 @@
 	"scripts": {
 		"build": "node build.mjs",
 		"typecheck": "tsc --noEmit",
-		"test": "vitest run"
+		"test": "vitest run",
+		"test:types": "tsc -p test/types-consumer"
 	},
 	"dependencies": {
 		"@preact/signals-debug": "^1.5.0"

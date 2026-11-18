@@ -6,10 +6,12 @@
  *
  * The panes are code-split and only loaded the first time they are shown.
  */
-import "./shell.css";
-import { createStyleElement } from "./styles-registry";
-import type { PreactPane } from "./panes/preact";
-import type { SignalsPane } from "./panes/signals";
+// Imported for its value (not as a bare side-effect import) so the emitted
+// element.d.ts doesn't reference a .css file.
+import { shellStyles } from "./shell-styles.js";
+import { CONTAINER_RESIZE_EVENT } from "./shared.js";
+import type { PreactPane } from "./panes/preact.js";
+import type { SignalsPane } from "./panes/signals.js";
 
 export type OverlayTab = "components" | "signals";
 export type OverlayPosition =
@@ -131,6 +133,40 @@ export class PreactDevtoolsOverlay extends BaseElement {
 		}
 		this.#setHeight(state.height ?? window.innerHeight * DEFAULT_HEIGHT_RATIO);
 
+		// "Reload and profile/record stats" was started from the Components
+		// pane; it has to be open to pick the recording back up.
+		if (window.__PREACT_DEVTOOLS_OVERLAY__?.reloadSession) {
+			this.tab = "components";
+			this.open = true;
+		}
+
+		// The components tree virtualizes its rows and only re-measures on
+		// resize events. Its pane can change size without the window resizing
+		// (drawer drag, being shown again after a window resize while hidden),
+		// so forward size changes of the pane under a dedicated event name
+		// (patched into upstream's `useResize`) instead of faking a window
+		// `resize` that the app would see too.
+		if (typeof ResizeObserver !== "undefined") {
+			const host = this.#paneHosts.get("components")!;
+			let last = "";
+			const ro = new ResizeObserver(entries => {
+				const { width, height } = entries[entries.length - 1].contentRect;
+				const size = `${width}x${height}`;
+				if (width === 0 || height === 0) {
+					// Hidden. Anything measured meanwhile (e.g. on a window resize)
+					// saw a 0px tall list, so re-measure once it's visible again,
+					// even if it comes back at the same size.
+					last = "";
+					return;
+				}
+				if (size === last) return;
+				last = size;
+				if (this.#preactPane) window.dispatchEvent(new Event(CONTAINER_RESIZE_EVENT));
+			});
+			ro.observe(host);
+			this.#cleanup.push(() => ro.disconnect());
+		}
+
 		const onKeyDown = (e: KeyboardEvent) => {
 			// Alt+Shift+D. Use `code`, as Option changes `key` on macOS.
 			if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && e.code === "KeyD") {
@@ -171,7 +207,9 @@ export class PreactDevtoolsOverlay extends BaseElement {
 
 	#render() {
 		const shadow = this.#shadow;
-		shadow.appendChild(createStyleElement(this.ownerDocument, "shell"));
+		const style = this.ownerDocument.createElement("style");
+		style.textContent = shellStyles();
+		shadow.appendChild(style);
 
 		const launcher = document.createElement("button");
 		launcher.className = "launcher";
@@ -265,7 +303,6 @@ export class PreactDevtoolsOverlay extends BaseElement {
 				handle.removeEventListener("pointercancel", onUp);
 				this.#drawer.classList.remove("resizing");
 				writeState({ height: this.#height });
-				this.#notifyPaneResize();
 			};
 			handle.addEventListener("pointermove", onMove);
 			handle.addEventListener("pointerup", onUp);
@@ -274,7 +311,6 @@ export class PreactDevtoolsOverlay extends BaseElement {
 		handle.addEventListener("dblclick", () => {
 			this.#setHeight(window.innerHeight * DEFAULT_HEIGHT_RATIO);
 			writeState({ height: this.#height });
-			this.#notifyPaneResize();
 		});
 	}
 
@@ -283,14 +319,6 @@ export class PreactDevtoolsOverlay extends BaseElement {
 		const h = Math.round(Math.min(max, Math.max(MIN_HEIGHT, px || 0)));
 		this.#height = h;
 		this.style.setProperty("--pdo-height", `${h}px`);
-	}
-
-	/**
-	 * The components tree virtualizes its rows and only re-measures on window
-	 * `resize`, so let it know the drawer height changed.
-	 */
-	#notifyPaneResize() {
-		if (this.#preactPane) window.dispatchEvent(new Event("resize"));
 	}
 
 	#sync() {
@@ -320,7 +348,7 @@ export class PreactDevtoolsOverlay extends BaseElement {
 			// Claim the slot synchronously so concurrent syncs don't double-mount.
 			const placeholder: PreactPane = { store: null!, destroy() {} };
 			this.#preactPane = placeholder;
-			import("./panes/preact")
+			import("./panes/preact.js")
 				.then(({ mountPreactPane }) => {
 					if (this.#destroyed || this.#preactPane !== placeholder) return;
 					this.#preactPane = mountPreactPane(root, window);
@@ -328,7 +356,7 @@ export class PreactDevtoolsOverlay extends BaseElement {
 				.catch(err => this.#showError(root, "Components", err));
 		} else if (tab === "signals" && !this.#signalsPane) {
 			const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-			const pending: Promise<SignalsPane | null> = import("./panes/signals")
+			const pending: Promise<SignalsPane | null> = import("./panes/signals.js")
 				.then(async ({ mountSignalsPane }) => {
 					if (this.#destroyed || this.#signalsPane !== pending) return null;
 					const pane = await mountSignalsPane(root, window);

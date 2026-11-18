@@ -65,16 +65,29 @@ preactDevtoolsOverlay({
 
 Two things have to happen **before** your app code runs: the devtools hook
 has to be installed before Preact loads, and `@preact/signals-debug` has to
-patch signals before any are created. Put this at the very top of your entry
-file:
+patch signals before any are created. Install `@preact/signals-debug`
+yourself (it must resolve to the same `@preact/signals-core` as your app):
+
+```sh
+pnpm add -D @preact/signals-debug
+```
+
+Then put this at the very top of your entry file:
 
 ```ts
-import "preact-devtools-overlay/client"; // must come first
+// Must come first: installs window.__PREACT_DEVTOOLS__.
+import { configureSignalsDebug } from "preact-devtools-overlay/client";
 import "preact/debug";
-import "@preact/signals-debug"; // only if you use signals
+// Only if you use signals:
+import { setDebugOptions } from "@preact/signals-debug";
+configureSignalsDebug(setDebugOptions, { consoleLogging: false });
 
 import "preact-devtools-overlay/auto"; // mounts the overlay UI
 ```
+
+`configureSignalsDebug` turns off signals-debug's default console logging
+(every update is logged otherwise) and keeps the Signals panel's settings in
+sync with that. If you only import `@preact/signals-debug`, logging stays on.
 
 Or mount the overlay yourself:
 
@@ -120,7 +133,9 @@ parts.
   `@preact/signals-core` instance, so the Vite plugin pre-bundles it alongside
   the app's dependencies.
 - Each UI lives in its own nested shadow root, so their global resets and
-  theme variables can't clash with each other or with your page. The only
+  theme variables can't clash with each other or with your page. `rem`
+  units are compiled to `px`, because a shadow root can't isolate them from
+  the page's root font size. The only
   thing added to the page's own `<head>` is the stylesheet for the element
   highlighter that preact-devtools draws over your app.
 - Both panes are code-split and only load when first opened.
@@ -134,26 +149,30 @@ Shadow DOM support in [`patches/`](./patches):
 
 | Patch | Why |
 | --- | --- |
-| `preact-devtools/0001-theme-root-in-shadow-dom.patch` | The theme class was put on `document.body`, which can't style anything inside a shadow root. |
-| `signals/0001-shadow-dom-support.patch` | The theme model used `document.querySelector`, which can't see into a shadow root. The graph's click-outside handler used `e.target`, which is retargeted to the shadow host, so the export menu closed on any click. |
+| `preact-devtools/0001-shadow-dom-support.patch` | The theme class was put on `document.body`, which can't style anything inside a shadow root. `useResize` also listens for a `preact-devtools:container-resize` event, so the virtualized tree re-measures when the drawer (not the window) changes size. |
+| `signals/0001-shadow-dom-support.patch` | The theme model used `document.querySelector`, which can't see into a shadow root, and it ran before the panel existed, so a stored theme wasn't applied on first render. The graph's click-outside handler used `e.target`, which is retargeted to the shadow host, so the export menu closed on any click. |
 
-Don't edit `vendor/` by hand. To update upstream or change a patch:
+`vendor/` is committed with the patches already applied.
 
 ```sh
-# bump the ref in upstream.json, then:
-pnpm sync-upstream            # re-vendor + re-apply patches
-pnpm check-upstream           # CI: verify vendor/ == upstream + patches
-```
+# Update upstream: bump the ref in upstream.json, then
+pnpm sync-upstream            # re-vendor + re-apply patches (fails loudly if one doesn't apply)
 
-To change a patch, edit the vendored file, then regenerate the patch with
-`git diff --relative=packages/preact-devtools-overlay/vendor/<dir> > patches/<dir>/<name>.patch`
-and check that `pnpm check-upstream` passes.
+# Change a patch: edit the files in vendor/ directly, then
+pnpm update-patches           # rewrite patches/<name>/*.patch from vendor/ vs. pristine upstream
+
+pnpm check-upstream           # (CI) verify vendor/ == upstream + patches
+```
 
 ## Differences from the browser extensions
 
 - **"Inspect DOM node"** and **"View source"** need privileged devtools APIs
   (`inspect()`). The overlay logs the DOM node or component function to the
   console instead, where the browser makes it clickable.
+- **Reload and profile / record stats** work, but the page reloads with the
+  panel. The overlay reopens on its own and replays what the hook recorded
+  in the meantime (up to 20,000 messages). Unlike in the extension, custom
+  component filters aren't applied during that recording.
 - If the Preact Devtools **browser extension** is installed, it defines
   `__PREACT_DEVTOOLS__` first. The overlay then reuses the extension's hook
   (it speaks the same protocol) instead of replacing it.
@@ -167,8 +186,9 @@ and check that `pnpm check-upstream` passes.
 ```sh
 pnpm install
 pnpm build          # build the package
-pnpm dev            # watch-build the package + run the playground
+pnpm dev            # watch-build the package + run the playground (/?rows=200 for a big tree)
 pnpm test           # unit tests (vitest)
+pnpm test:types     # strict consumer check of the published types
 pnpm test:e2e       # Playwright tests against the playground (Chromium + Firefox)
 pnpm typecheck
 ```

@@ -3,13 +3,13 @@ export {
 	defineOverlayElement,
 	type OverlayTab,
 	type OverlayPosition,
-} from "./element";
+} from "./element.js";
 import {
 	defineOverlayElement,
 	type OverlayPosition,
 	type OverlayTab,
 	type PreactDevtoolsOverlay,
-} from "./element";
+} from "./element.js";
 
 export interface MountOverlayOptions {
 	/** Open the drawer immediately. Defaults to the last persisted state. */

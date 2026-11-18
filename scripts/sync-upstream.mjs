@@ -5,6 +5,7 @@
 //   node scripts/sync-upstream.mjs                 # sync everything
 //   node scripts/sync-upstream.mjs preact-devtools # sync a single upstream
 //   node scripts/sync-upstream.mjs --check         # fail if vendor/ differs from upstream+patches
+//   node scripts/sync-upstream.mjs --update-patches # rewrite patches from your edits in vendor/
 //
 // Patches live in `patches/<name>/*.patch` and are applied in lexical order
 // with `git apply`. Paths inside a patch are relative to the vendor dir.
@@ -20,6 +21,11 @@ const config = JSON.parse(
 
 const args = process.argv.slice(2);
 const check = args.includes("--check");
+const updatePatches = args.includes("--update-patches");
+if (check && updatePatches) {
+	console.error("--check and --update-patches are mutually exclusive");
+	process.exit(1);
+}
 const only = args.filter(a => !a.startsWith("--"));
 const names = Object.keys(config).filter(
 	k => !k.startsWith("$") && (only.length === 0 || only.includes(k)),
@@ -78,6 +84,54 @@ for (const name of names) {
 				.filter(f => f.endsWith(".patch"))
 				.sort()
 		: [];
+
+	if (updatePatches) {
+		// Diff the pristine upstream tree against the (hand-edited) vendor dir
+		// inside a throwaway repo, so new and deleted files are included and
+		// paths come out relative to the vendor dir.
+		if (patchFiles.length > 1) {
+			console.error(
+				`[${name}] --update-patches only supports a single patch per upstream, found ${patchFiles.length}`,
+			);
+			process.exit(1);
+		}
+		const diffRepo = path.join(tmp, "diff");
+		const gitEnv = { ...process.env, GIT_CEILING_DIRECTORIES: tmp };
+		fs.cpSync(out, diffRepo, { recursive: true });
+		run("git", ["init", "-q"], { cwd: diffRepo, env: gitEnv });
+		run("git", ["add", "-A"], { cwd: diffRepo, env: gitEnv });
+		run(
+			"git",
+			["-c", "user.name=sync", "-c", "user.email=sync@localhost", "commit", "-q", "-m", "upstream"],
+			{ cwd: diffRepo, env: gitEnv },
+		);
+		for (const entry of fs.readdirSync(diffRepo)) {
+			if (entry !== ".git") fs.rmSync(path.join(diffRepo, entry), { recursive: true });
+		}
+		for (const entry of fs.readdirSync(path.join(root, dest))) {
+			if (entry === "UPSTREAM.md") continue;
+			fs.cpSync(path.join(root, dest, entry), path.join(diffRepo, entry), {
+				recursive: true,
+			});
+		}
+		run("git", ["add", "-A"], { cwd: diffRepo, env: gitEnv });
+		const diff = run("git", ["diff", "--cached", "--binary"], {
+			cwd: diffRepo,
+			env: gitEnv,
+		});
+		const target = path.join(patchDir, patchFiles[0] ?? "0001-local.patch");
+		if (diff.trim() === "") {
+			if (patchFiles[0]) fs.rmSync(target);
+			console.log(`[${name}] no local changes, removed patch`);
+		} else {
+			fs.mkdirSync(patchDir, { recursive: true });
+			fs.writeFileSync(target, diff);
+			console.log(`[${name}] wrote ${path.relative(root, target)}`);
+		}
+		fs.rmSync(tmp, { recursive: true, force: true });
+		continue;
+	}
+
 	for (const patch of patchFiles) {
 		console.log(`[${name}] applying ${patch}`);
 		try {

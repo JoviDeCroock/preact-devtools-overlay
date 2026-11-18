@@ -104,6 +104,8 @@ button:focus-visible {
 	height: 8px;
 	cursor: ns-resize;
 	touch-action: none;
+	/* Above the tab buttons, which are positioned (for their underline). */
+	z-index: 1;
 }
 
 .resize-handle:hover,

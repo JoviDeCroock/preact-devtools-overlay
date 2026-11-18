@@ -45,6 +45,13 @@ function TodoItem({ todo }: { todo: { id: number; text: string; done: boolean } 
 	);
 }
 
+// `?rows=200` renders extra components, e.g. to exercise the virtualized tree.
+const extraRows = Number(new URLSearchParams(location.search).get("rows")) || 0;
+
+function Row({ index }: { index: number }) {
+	return <li>Row {index}</li>;
+}
+
 function App() {
 	return (
 		<main style="font-family: system-ui; padding: 1rem 2rem">
@@ -61,6 +68,13 @@ function App() {
 					<TodoItem key={t.id} todo={t} />
 				))}
 			</ul>
+			{extraRows > 0 && (
+				<ol>
+					{Array.from({ length: extraRows }, (_, i) => (
+						<Row key={i} index={i} />
+					))}
+				</ol>
+			)}
 		</main>
 	);
 }

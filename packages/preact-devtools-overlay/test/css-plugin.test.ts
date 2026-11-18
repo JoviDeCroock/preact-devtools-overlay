@@ -37,6 +37,14 @@ function registered(code: string) {
 }
 
 describe("shadowCssPlugin", () => {
+	it("handles Windows-style roots", async () => {
+		const plugin = shadowCssPlugin({ root: "C:\\work\\pkg" });
+		const ctx = { resolve: async () => ({ id: "C:/work/pkg/src/a.css" }) };
+		expect(await plugin.resolveId.call(ctx, "./a.css", "C:/work/pkg/src/a.ts")).toBe(
+			"\0pdo-css:C:/work/pkg/src/a.css.js",
+		);
+	});
+
 	it("rewrites document-level selectors to :host", async () => {
 		const { compile } = setup({
 			"src/a.css": ":root { --x: 1 } html, body { margin: 0 } :root .dark { color: red } .tree-body { color: blue }",
@@ -77,9 +85,23 @@ describe("shadowCssPlugin", () => {
 		expect(css).toBe(":host{overflow:hidden}");
 	});
 
+	it("pins rem units to 16px so the page's root font size can't leak in", async () => {
+		const { compile } = setup({
+			"src/rem.css": ".a { padding: 0.5rem 1rem; font-size: var(--x, 0.75rem) } @media (min-width: 37.5rem) { .a { margin: 2rem } }",
+		});
+		const { css } = registered(await compile("src/rem.css"));
+		expect(css).not.toMatch(/\drem/);
+		expect(css).toContain("padding:8px 16px");
+		expect(css).toContain("12px");
+		expect(css).toContain("width>=600px");
+		expect(css).toContain("margin:32px");
+	});
+
 	it("ignores CSS from outside the package", async () => {
 		const plugin = shadowCssPlugin({ root: "/pkg" });
-		const ctx = { resolve: async () => ({ id: "/elsewhere/x.css" }) };
-		expect(await plugin.resolveId.call(ctx, "./x.css", "/elsewhere/a.ts")).toBeNull();
+		const ctx = { resolve: async (id: string) => ({ id }) };
+		expect(await plugin.resolveId.call(ctx, "/elsewhere/x.css", "/elsewhere/a.ts")).toBeNull();
+		// A sibling directory that merely shares the prefix is outside too.
+		expect(await plugin.resolveId.call(ctx, "/pkg-other/x.css", "/pkg-other/a.ts")).toBeNull();
 	});
 });
