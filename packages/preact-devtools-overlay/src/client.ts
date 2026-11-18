@@ -36,15 +36,18 @@ function install() {
 	window.__PREACT_DEVTOOLS_OVERLAY__ = state;
 
 	// Must be read before the hook consumes (and removes) these flags when
-	// the first renderer attaches.
-	try {
-		if (localStorage.getItem(PROFILE_RELOAD) !== null) {
-			state.reloadSession = { kind: "profile", events: [], truncated: false };
-		} else if (localStorage.getItem(STATS_RELOAD) !== null) {
-			state.reloadSession = { kind: "stats", events: [], truncated: false };
+	// the first renderer attaches. When we reuse a hook we didn't install
+	// (the browser extension's), the flags belong to that devtools instance.
+	if (!state.reusedExistingHook) {
+		try {
+			if (localStorage.getItem(PROFILE_RELOAD) !== null) {
+				state.reloadSession = { kind: "profile", events: [], truncated: false };
+			} else if (localStorage.getItem(STATS_RELOAD) !== null) {
+				state.reloadSession = { kind: "stats", events: [], truncated: false };
+			}
+		} catch {
+			// Storage disabled: the hook can't read the flags either.
 		}
-	} catch {
-		// Storage disabled: the hook can't read the flags either.
 	}
 
 	window.addEventListener("message", e => {

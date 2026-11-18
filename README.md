@@ -171,8 +171,10 @@ pnpm check-upstream           # (CI) verify vendor/ == upstream + patches
   console instead, where the browser makes it clickable.
 - **Reload and profile / record stats** work, but the page reloads with the
   panel. The overlay reopens on its own and replays what the hook recorded
-  in the meantime (up to 20,000 messages). Unlike in the extension, custom
-  component filters aren't applied during that recording.
+  in the meantime. Custom component filters aren't applied during that
+  recording. If the app sends more than 20,000 messages before the overlay
+  opens, the recording is discarded (with a console warning) rather than
+  shown incomplete.
 - If the Preact Devtools **browser extension** is installed, it defines
   `__PREACT_DEVTOOLS__` first. The overlay then reuses the extension's hook
   (it speaks the same protocol) instead of replacing it.

@@ -50,7 +50,7 @@ function writeSettings(patch: PersistedSettings) {
 	}
 }
 
-function restoreSettings(store: Store) {
+function restoreSettings(store: Store, { filters }: { filters: boolean }) {
 	const s = readSettings();
 	if (s.theme === "auto" || s.theme === "light" || s.theme === "dark") {
 		store.theme.value = s.theme;
@@ -58,7 +58,7 @@ function restoreSettings(store: Store) {
 	store.profiler.captureRenderReasons.value = !!s.captureRenderReasons;
 	store.profiler.highlightUpdates.value = !!s.highlightUpdates;
 	store.debugMode.value = !!s.debugMode;
-	if (s.componentFilters) {
+	if (filters && s.componentFilters) {
 		try {
 			store.filter.restore(s.componentFilters as any);
 		} catch {
@@ -119,7 +119,19 @@ export function mountPreactPane(shadow: ShadowRoot, win: Window): PreactPane {
 		}),
 	];
 
-	restoreSettings(store);
+	const client = win.__PREACT_DEVTOOLS_OVERLAY__;
+	const session = client?.reloadSession ?? null;
+	if (client) client.reloadSession = null;
+	// A replayable "Reload and profile/record stats" recording. If the buffer
+	// overflowed, the recording is incomplete and the tree can't be rebuilt
+	// from it, so it's discarded below instead.
+	const replay = session && !session.truncated ? session : null;
+
+	// Restoring non-default filters sends `update-filter`, which makes the
+	// hook unmount and remount every tree. During a replayed recording that
+	// would show up as bogus commits, so like the extension (whose filters
+	// are reset by the reload) the recording runs with default filters.
+	restoreSettings(store, { filters: !replay });
 
 	disposers.push(
 		effect(() => writeSettings({ theme: store.theme.value })),
@@ -134,11 +146,16 @@ export function mountPreactPane(shadow: ShadowRoot, win: Window): PreactPane {
 		effect(() => writeSettings({ debugMode: store.debugMode.value })),
 	);
 
-	const handle = (type: string, data: unknown, resendFilters = true) => {
+	const isRecording = () =>
+		store.profiler.isRecording.value || store.stats.isRecording.value;
+
+	const handle = (type: string, data: unknown) => {
 		applyEvent(store, type as any, data);
 		// The hook only starts listening once a renderer attached, so filters
-		// sent before that were dropped. Re-send them for every renderer.
-		if (type === "attach" && resendFilters) store.filter.submit();
+		// sent before that were dropped. Re-send them for every new renderer,
+		// unless a recording is running: applying filters remounts all trees,
+		// which would be recorded as commits.
+		if (type === "attach" && !isRecording()) store.filter.submit();
 	};
 
 	const onMessage = (e: MessageEvent) => {
@@ -146,40 +163,37 @@ export function mountPreactPane(shadow: ShadowRoot, win: Window): PreactPane {
 	};
 	win.addEventListener("message", onMessage);
 
-	const client = win.__PREACT_DEVTOOLS_OVERLAY__;
-	const session = client?.reloadSession;
-	if (client && session) {
-		// "Reload and profile" / "Reload and record stats": the hook has been
-		// recording since the page started, replay everything it sent.
-		client.reloadSession = null;
-		if (session.kind === "profile") {
+	if (replay) {
+		// The hook has been recording since the page started; replay
+		// everything it sent, in order.
+		if (replay.kind === "profile") {
 			startProfiling(store.profiler);
 			store.activePanel.value = Panel.PROFILER;
 		} else {
 			store.stats.isRecording.value = true;
 			store.activePanel.value = Panel.STATISTICS;
 		}
-		if (session.truncated) {
+		for (const ev of replay.events) handle(ev.type, ev.data);
+	} else {
+		if (session) {
+			// Overflowed: stop the hook's recording and fall back to a normal
+			// connect, so the tree is still correct.
+			send(session.kind === "profile" ? "stop-profiling" : "stop-stats-recording", null);
 			console.warn(
-				"[preact-devtools-overlay] The recording was too long to buffer before the panel opened; early commits are missing.",
+				`[preact-devtools-overlay] "Reload and ${session.kind === "profile" ? "profile" : "record stats"}" was discarded: the app sent too many updates before the overlay opened. Start the recording again with the overlay open.`,
 			);
 		}
-		// Don't re-send filters here: applying them re-flushes the whole tree,
-		// which would show up in the recording. Like the extension, a reloaded
-		// session runs with the hook's default filters.
-		for (const ev of session.events) handle(ev.type, ev.data, false);
-	} else {
 		// Replay renderer feature flags that were emitted before we mounted.
 		for (const ev of client?.attachEvents ?? []) handle(ev.type, ev.data);
 	}
 
 	render(h(DevTools, { store, window: win }), container);
 
-	// Mark the hook as connected. Outside of a replayed session also ask every
-	// renderer for its full tree (a refresh during a session would record a
-	// bogus remount commit).
+	// Mark the hook as connected. Outside of a replayed recording also ask
+	// every renderer for its full tree (during one, a refresh would record a
+	// bogus remount commit, and the replay already contains the tree).
 	send("init", null);
-	if (!session) send("refresh", null);
+	if (!replay) send("refresh", null);
 
 	return {
 		store,

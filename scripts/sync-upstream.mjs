@@ -96,7 +96,14 @@ for (const name of names) {
 			process.exit(1);
 		}
 		const diffRepo = path.join(tmp, "diff");
-		const gitEnv = { ...process.env, GIT_CEILING_DIRECTORIES: tmp };
+		// Ignore the user's git config (diff.noprefix, color.ui, external diff
+		// drivers, ...) so the patch format is always what `git apply` expects.
+		const gitEnv = {
+			...process.env,
+			GIT_CEILING_DIRECTORIES: tmp,
+			GIT_CONFIG_GLOBAL: os.devNull,
+			GIT_CONFIG_NOSYSTEM: "1",
+		};
 		fs.cpSync(out, diffRepo, { recursive: true });
 		run("git", ["init", "-q"], { cwd: diffRepo, env: gitEnv });
 		run("git", ["add", "-A"], { cwd: diffRepo, env: gitEnv });
@@ -108,17 +115,35 @@ for (const name of names) {
 		for (const entry of fs.readdirSync(diffRepo)) {
 			if (entry !== ".git") fs.rmSync(path.join(diffRepo, entry), { recursive: true });
 		}
-		for (const entry of fs.readdirSync(path.join(root, dest))) {
-			if (entry === "UPSTREAM.md") continue;
-			fs.cpSync(path.join(root, dest, entry), path.join(diffRepo, entry), {
-				recursive: true,
-			});
+		// Only files git would track (no .DS_Store or other ignored junk).
+		const vendorFiles = run(
+			"git",
+			["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", dest],
+			{ cwd: root },
+		)
+			.split("\0")
+			.filter(Boolean)
+			.filter(f => fs.existsSync(path.join(root, f)));
+		for (const file of vendorFiles) {
+			const rel = path.relative(path.join(root, dest), path.join(root, file));
+			if (rel === "UPSTREAM.md") continue;
+			fs.mkdirSync(path.dirname(path.join(diffRepo, rel)), { recursive: true });
+			fs.copyFileSync(path.join(root, file), path.join(diffRepo, rel));
 		}
 		run("git", ["add", "-A"], { cwd: diffRepo, env: gitEnv });
-		const diff = run("git", ["diff", "--cached", "--binary"], {
-			cwd: diffRepo,
-			env: gitEnv,
-		});
+		const diff = run(
+			"git",
+			[
+				"diff",
+				"--cached",
+				"--binary",
+				"--no-color",
+				"--no-ext-diff",
+				"--src-prefix=a/",
+				"--dst-prefix=b/",
+			],
+			{ cwd: diffRepo, env: gitEnv },
+		);
 		const target = path.join(patchDir, patchFiles[0] ?? "0001-local.patch");
 		if (diff.trim() === "") {
 			if (patchFiles[0]) fs.rmSync(target);

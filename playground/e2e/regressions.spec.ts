@@ -42,6 +42,69 @@ test("reload and profile records the initial render", async ({ page }) => {
 	expect(await page.evaluate(() => (window as any).__PREACT_DEVTOOLS_OVERLAY__?.reloadSession)).toBeNull();
 });
 
+test("saved filters don't add commits to a reload-and-profile recording", async ({ page }) => {
+	await openComponents(page);
+	await overlay(page).getByTestId("filter-menu-button").click();
+	await overlay(page).getByLabel("DOM nodes").uncheck();
+	await overlay(page).getByTestId("filter-update").click();
+
+	await overlay(page).getByText("Profiler", { exact: true }).click();
+	await overlay(page).getByTestId("reload-and-profile-btn").click();
+	await page.waitForLoadState("load");
+	await expect(overlay(page).getByTitle("Stop Recording").first()).toBeVisible();
+	await page.getByTestId("counter").click();
+	await overlay(page).getByTitle("Stop Recording").first().click();
+
+	// Initial mount + the click, no remounts from re-applied filters.
+	await expect(overlay(page).getByText(/^\d+ \/ 2$/)).toBeVisible();
+
+	// Saved filters are still applied on the next normal load.
+	await page.reload();
+	await overlay(page).getByText("Elements", { exact: true }).click();
+	await expect(treeItems(page).filter({ hasText: /^button$/ }).first()).toBeVisible();
+});
+
+test("an overflowed reload session is discarded but the tree still works", async ({ page }) => {
+	const warnings: string[] = [];
+	page.on("console", m => m.type() === "warning" && warnings.push(m.text()));
+	await openComponents(page);
+
+	// Pre-fill the session buffer so only the first hook messages fit.
+	await page.addInitScript(() => {
+		Object.defineProperty(window, "__PREACT_DEVTOOLS_OVERLAY__", {
+			configurable: true,
+			set(state: any) {
+				let session: any = null;
+				Object.defineProperty(state, "reloadSession", {
+					configurable: true,
+					enumerable: true,
+					get: () => session,
+					set(v: any) {
+						if (v) for (let i = 0; i < 19_998; i++) v.events.push({ type: "noop", data: null });
+						session = v;
+					},
+				});
+				Object.defineProperty(window, "__PREACT_DEVTOOLS_OVERLAY__", {
+					configurable: true,
+					writable: true,
+					value: state,
+				});
+			},
+		});
+	});
+
+	await overlay(page).getByText("Profiler", { exact: true }).click();
+	await overlay(page).getByTestId("reload-and-profile-btn").click();
+	await page.waitForLoadState("load");
+
+	// Falls back to a normal connect: full tree, live updates, not recording.
+	await expect(treeItems(page).filter({ hasText: /^SignalCounter$/ })).toBeVisible();
+	await page.getByTestId("counter").click();
+	await overlay(page).getByText("Profiler", { exact: true }).click();
+	await expect(overlay(page).getByTitle("Start Recording").first()).toBeVisible();
+	expect(warnings.some(w => w.includes("was discarded"))).toBe(true);
+});
+
 test("tree re-measures when its pane changes size", async ({ page }) => {
 	await page.setViewportSize({ width: 1200, height: 500 });
 	await page.goto("/?rows=200");

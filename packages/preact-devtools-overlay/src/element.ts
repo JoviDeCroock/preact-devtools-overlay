@@ -377,7 +377,7 @@ export class PreactDevtoolsOverlay extends BaseElement {
 	#showError(root: ShadowRoot, name: string, err: unknown) {
 		console.error(`[preact-devtools-overlay] Failed to load the ${name} panel`, err);
 		const msg = document.createElement("p");
-		msg.style.cssText = "padding:1rem;font:13px/1.4 system-ui,sans-serif;color:#b00020";
+		msg.style.cssText = "padding:16px;font:13px/1.4 system-ui,sans-serif;color:#b00020";
 		msg.textContent = `Failed to load the ${name} panel. See the console for details.`;
 		root.replaceChildren(msg);
 	}
