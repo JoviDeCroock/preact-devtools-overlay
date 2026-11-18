@@ -96,6 +96,18 @@ describe("preactDevtoolsOverlay()", () => {
 		expect(await configFor({ agentApi: false }, "serve")).toContain(`"agentApi":false`);
 	});
 
+	it("points the client at Vite's open-in-editor endpoint on the dev server", async () => {
+		const configFor = async (command: "serve" | "build", base: string) => {
+			const { plugin } = await entryFor({ signals: false, apply: "always" }, process.cwd(), command);
+			plugin.configResolved({ command, base });
+			return plugin.load(plugin.resolveId(CONFIG_URL));
+		};
+		expect(await configFor("serve", "/app/")).toContain(`"openInEditor":"/app/__open-in-editor"`);
+		expect(await configFor("serve", "/")).toContain(`"openInEditor":"/__open-in-editor"`);
+		expect(await configFor("serve", "./")).toContain(`"openInEditor":"/__open-in-editor"`);
+		expect(await configFor("build", "/")).not.toContain("openInEditor");
+	});
+
 	it("tracks signal construction with the app's signals package", async () => {
 		const withSignals = path.resolve(import.meta.dirname, "../../../playground");
 		const { code, config } = await entryFor({}, withSignals);

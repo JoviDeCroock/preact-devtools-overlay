@@ -8,7 +8,11 @@ in a single in-page panel. No browser extension needed.
   editing, element picker, highlight updates, profiler, statistics).
 - **Signals**: the signals devtools UI (updates, performance insights,
   timeline, dependency graph).
-
+- **Insights**: why the selected component rendered, the signals it reads,
+  the provider of each context it consumes, and "Open in editor". Also
+  lists remounts (key problems), effects that outlived their component, and
+  every signal with its readers. It follows the Components tab's selection
+  and links back to it.
 - **Agent API**: the same information as data on
   `window.__PREACT_DEVTOOLS_OVERLAY__.api`, for AI coding agents and
   scripts, including why every component rendered. See
@@ -148,7 +152,7 @@ overlay.toggle();
 
 `<preact-devtools-overlay>` can also be used as plain HTML once
 `defineOverlayElement()` has been called. It supports the `open`, `tab`
-(`components` | `signals`) and `position` (`bottom-right` | `bottom-left` |
+(`components` | `signals` | `insights`) and `position` (`bottom-right` | `bottom-left` |
 `top-right` | `top-left`) attributes and exposes `launcher` and `drawer` CSS
 parts.
 
@@ -222,7 +226,10 @@ pnpm check-upstream           # (CI) verify vendor/ == upstream + patches
 
 - **"Inspect DOM node"** and **"View source"** need privileged devtools APIs
   (`inspect()`). The overlay logs the DOM node or component function to the
-  console instead, where the browser makes it clickable.
+  console instead, where the browser makes it clickable. On the Vite dev
+  server, "View source" also opens the place the component is rendered (its
+  JSX) in your editor, through Vite's `/__open-in-editor` (set
+  `LAUNCH_EDITOR` to pick the editor).
 - **Reload and profile / record stats** work, but the page reloads with the
   panel. The overlay reopens on its own and replays what the hook recorded
   in the meantime. Custom component filters aren't applied during that

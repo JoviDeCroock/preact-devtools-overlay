@@ -105,6 +105,8 @@ export function preactDevtoolsOverlay(
 	// The package the app gets `Signal` from, for `trackSignals()`.
 	let signalsPackage: string | null = null;
 	let agentApi = options.agentApi ?? true;
+	// Vite's own endpoint (its error overlay uses it), under `base`.
+	let openInEditor: string | null = null;
 
 	return {
 		name: "preact-devtools-overlay",
@@ -149,6 +151,11 @@ export function preactDevtoolsOverlay(
 			};
 		},
 
+		configResolved(config) {
+			const base = /^\//.test(config.base) ? config.base : "/";
+			openInEditor = config.command === "serve" ? `${base.replace(/\/?$/, "/")}__open-in-editor` : null;
+		},
+
 		resolveId(id) {
 			if (id === ENTRY_URL) return ENTRY_ID;
 			if (id === CONFIG_URL) return CONFIG_ID;
@@ -158,7 +165,8 @@ export function preactDevtoolsOverlay(
 			if (id === CONFIG_ID) {
 				// Its own module: imports are evaluated in order, so this runs
 				// before the client reads the config.
-				return `window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = ${JSON.stringify({ agentApi })};\n`;
+				const config = { agentApi, ...(openInEditor ? { openInEditor } : {}) };
+				return `window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = ${JSON.stringify(config)};\n`;
 			}
 			if (id !== ENTRY_ID) return;
 

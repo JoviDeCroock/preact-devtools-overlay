@@ -66,7 +66,7 @@ Most queries accept { format: "text" } for a compact, token-friendly answer.
 Components
   getTree({ root?, depth?, format? })     component tree (what the Components tab shows)
   find(query, { limit? })                 [{ id, name, key, path }] matching a name or selector
-  inspect(target, { maxBytes? })          props, state, hooks, contexts (with provider), signals,
+  inspect(target, { maxBytes?, hooks? })  props, state, hooks, contexts (with provider), signals,
                                           source location
   update(target, kind, path, value)       kind: "props" | "state" | "context" (path: "a.b"),
                                           "hook" | "signal" (path: index from inspect())
@@ -431,19 +431,24 @@ export function createAgentApi(deps: AgentApiDeps) {
 		const byDebugId = new Map<string, object | string>();
 		// signals-debug ids of @preact/signals' internal text-binding signals.
 		const hidden = new Set<string>();
+		// Values are serialized after `limit` is applied: a big app has
+		// thousands of signals.
+		const sources = new Map<Row, unknown>();
+		const rawValues = new Map<Row, unknown>();
 		const live = (s: any, entry: Parameters<typeof owner>[0]): Row => {
 			const computed = isComputed(s);
 			const row: Row = {
 				id: debugId(s),
 				name: signalName(s) ?? (computed ? "(anonymous computed)" : "(anonymous signal)"),
 				type: computed ? "computed" : "signal",
-				value: currentValue(s),
+				value: undefined,
 				updates: 0,
 				subscribers: subscriberCount(s),
 			};
 			const by = owner(entry);
 			if (by) row.createdBy = by;
 			if (row.id) byDebugId.set(row.id, s);
+			sources.set(row, s);
 			return row;
 		};
 
@@ -482,11 +487,12 @@ export function createAgentApi(deps: AgentApiDeps) {
 				id: k.id,
 				name: k.name,
 				type: k.type,
-				...(k.hasValue ? { value: toAgentValue(k.value) } : {}),
+				...(k.hasValue ? { value: undefined } : {}),
 				updates: k.updates,
 				...(k.dependencies.length ? { dependsOn: k.dependencies } : {}),
 				...(k.disposed ? { disposed: true as const } : {}),
 			});
+			if (k.hasValue) rawValues.set(rows.get(k.id)!, k.value);
 		}
 
 		let list = [...rows.values()];
@@ -494,6 +500,10 @@ export function createAgentApi(deps: AgentApiDeps) {
 		const limit = opts.limit ?? 200;
 		const more = Math.max(0, list.length - limit);
 		if (more) list = list.slice(0, limit);
+		for (const row of list) {
+			if (sources.has(row)) row.value = currentValue(sources.get(row));
+			else if (rawValues.has(row)) row.value = toAgentValue(rawValues.get(row));
+		}
 		if (opts.format === "text") {
 			if (!list.length) return signals.api || deps.registry?.installed ? "(no signals seen yet)" : "(@preact/signals-debug is not loaded)";
 			return (
@@ -774,7 +784,7 @@ export function createAgentApi(deps: AgentApiDeps) {
 		return out.length ? out : null;
 	}
 
-	function inspect(target: Target, opts: { maxBytes?: number } = {}) {
+	function inspect(target: Target, opts: { maxBytes?: number; hooks?: boolean } = {}) {
 		const id = resolve(target);
 		const r = rendererFor(id);
 		const vnode = r?.getVNodeById(id);
@@ -784,13 +794,16 @@ export function createAgentApi(deps: AgentApiDeps) {
 
 		// Hooks can only be read by re-running them, which the adapter does
 		// (exactly like selecting the component in the Components tab).
+		// `{ hooks: false }` skips that, for callers that poll.
 		let data: any = null;
-		let hooks: unknown;
-		try {
-			data = r.inspect(id);
-			hooks = hooksToJson(data?.hooks ?? null);
-		} catch (err) {
-			hooks = `[Unreadable: ${err instanceof Error ? err.message : String(err)}]`;
+		let hooks: unknown = null;
+		if (opts.hooks !== false) {
+			try {
+				data = r.inspect(id);
+				hooks = hooksToJson(data?.hooks ?? null);
+			} catch (err) {
+				hooks = `[Unreadable: ${err instanceof Error ? err.message : String(err)}]`;
+			}
 		}
 
 		const state =

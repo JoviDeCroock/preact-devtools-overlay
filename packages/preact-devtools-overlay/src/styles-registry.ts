@@ -4,11 +4,12 @@
  * `registerStyle()` call so the CSS can be adopted by shadow roots (or the
  * page, for the in-page highlighter) instead of being injected globally.
  */
-export type StyleScope = "preact" | "signals" | "shell";
+export type StyleScope = "preact" | "signals" | "insights" | "shell";
 
 const styles: Record<StyleScope, string[]> = {
 	preact: [],
 	signals: [],
+	insights: [],
 	shell: [],
 };
 

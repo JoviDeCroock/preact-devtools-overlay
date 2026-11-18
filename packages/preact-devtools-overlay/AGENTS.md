@@ -29,7 +29,7 @@ Things to know before you start:
   cut to `maxBytes` (default 20,000). To read hooks, `inspect()` re-runs them
   the way the Components tab does when you select a component. That includes
   serializing their values in full, so call it per component, not in a loop
-  over the whole tree.
+  over the whole tree. Pass `{ hooks: false }` to skip the hooks.
 - **Missing API.** If `api` is `undefined`, the agent API is disabled
   (`agentApi: false`, or a production build). If `api.status().renderers` is
   `0`, Preact hasn't attached: `preact/debug` was not loaded, or loaded too

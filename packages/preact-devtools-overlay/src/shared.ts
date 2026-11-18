@@ -16,6 +16,12 @@ export interface OverlayClientConfig {
 	 * renders for it. Defaults to `true`.
 	 */
 	agentApi?: boolean;
+	/**
+	 * URL of the dev server's open-in-editor endpoint
+	 * (`?file=path:line:column`). The Vite plugin sets it to Vite's
+	 * `__open-in-editor`; without it, "Open in editor" isn't offered.
+	 */
+	openInEditor?: string;
 }
 
 export interface OverlayClientState {

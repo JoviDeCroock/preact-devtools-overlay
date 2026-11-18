@@ -11,6 +11,7 @@ import { preactDevtoolsOverlay } from "preact-devtools-overlay/vite";
 
 const el: PreactDevtoolsOverlay = mountOverlay({ open: true, tab: "signals" });
 const tab: OverlayTab = el.tab;
+el.tab = "insights";
 el.toggle();
 defineOverlayElement("my-devtools");
 configureSignalsDebug(() => {}, { consoleLogging: false });
