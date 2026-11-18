@@ -2,7 +2,7 @@
 # Vendored from https://github.com/preactjs/preact-devtools.git
 
 - ref: `5a4eecd233ad2eac082bcd6c5e71edf52785cb4a`
-- patches: none
+- patches: `patches/preact-devtools/0001-theme-root-in-shadow-dom.patch`
 
 Do not edit files in this directory directly. Change the patches in `patches/preact-devtools`
 and run `pnpm sync-upstream preact-devtools` instead.

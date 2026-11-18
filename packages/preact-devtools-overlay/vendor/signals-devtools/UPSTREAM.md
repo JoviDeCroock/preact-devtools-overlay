@@ -2,7 +2,7 @@
 # Vendored from https://github.com/preactjs/signals.git
 
 - ref: `395fd7ebd440cbc4d1ced05b4b498b08f3ed33d0`
-- patches: none
+- patches: `patches/signals/0001-shadow-dom-support.patch`
 
 Do not edit files in this directory directly. Change the patches in `patches/signals`
 and run `pnpm sync-upstream signals` instead.

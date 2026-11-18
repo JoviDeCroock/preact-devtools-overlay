@@ -55,7 +55,9 @@ for (const name of names) {
 	const { repo, ref, dest, patches, copy } = config[name];
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `sync-${name}-`));
 	const checkout = path.join(tmp, "src");
-	const out = check ? path.join(tmp, "out") : path.join(root, dest);
+	// Always assemble in the temp dir: `git apply` inside our own repo would
+	// resolve patch paths against the repo root and silently skip them.
+	const out = path.join(tmp, "out");
 
 	console.log(`[${name}] fetching ${repo}@${ref.slice(0, 12)}`);
 	fs.mkdirSync(checkout);
@@ -79,9 +81,11 @@ for (const name of names) {
 	for (const patch of patchFiles) {
 		console.log(`[${name}] applying ${patch}`);
 		try {
-			run("git", ["apply", "--whitespace=nowarn", path.join(patchDir, patch)], {
-				cwd: out,
-			});
+			run(
+				"git",
+				["apply", "--verbose", "--whitespace=nowarn", path.join(patchDir, patch)],
+				{ cwd: out, env: { ...process.env, GIT_CEILING_DIRECTORIES: tmp } },
+			);
 		} catch (err) {
 			console.error(`[${name}] patch ${patch} failed to apply:\n${err.stderr}`);
 			process.exit(1);
@@ -98,7 +102,11 @@ for (const name of names) {
 			`and run \`pnpm sync-upstream ${name}\` instead.\n`,
 	);
 
-	if (check) {
+	if (!check) {
+		const target = path.join(root, dest);
+		fs.rmSync(target, { recursive: true, force: true });
+		fs.cpSync(out, target, { recursive: true });
+	} else {
 		try {
 			run("git", ["diff", "--no-index", "--stat", out, path.join(root, dest)]);
 			console.log(`[${name}] vendor/ is up to date`);

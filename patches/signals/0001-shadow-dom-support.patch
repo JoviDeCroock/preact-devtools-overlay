@@ -1,0 +1,67 @@
+diff --git a/devtools-ui/src/components/Graph.tsx b/devtools-ui/src/components/Graph.tsx
+index afde085..149e061 100644
+--- a/devtools-ui/src/components/Graph.tsx
++++ b/devtools-ui/src/components/Graph.tsx
+@@ -169,7 +169,8 @@ export function GraphVisualization() {
+ 			if (
+ 				showExportMenu.value &&
+ 				exportMenuRef.current &&
+-				!exportMenuRef.current.contains(e.target as Node)
++				// composedPath() so clicks inside a shadow root are not retargeted
++				!e.composedPath().includes(exportMenuRef.current)
+ 			) {
+ 				showExportMenu.value = false;
+ 			}
+diff --git a/devtools-ui/src/dom-root.ts b/devtools-ui/src/dom-root.ts
+new file mode 100644
+index 0000000..b69a8aa
+--- /dev/null
++++ b/devtools-ui/src/dom-root.ts
+@@ -0,0 +1,14 @@
++/**
++ * The DOM tree that the devtools UI is rendered into. Defaults to `document`,
++ * but must be set to the ShadowRoot when the UI is mounted inside a shadow
++ * tree, otherwise `document.querySelector` can't see our elements.
++ */
++let queryRoot: ParentNode | null = null;
++
++export function setQueryRoot(root: ParentNode | null) {
++	queryRoot = root;
++}
++
++export function getQueryRoot(): ParentNode {
++	return queryRoot ?? document;
++}
+diff --git a/devtools-ui/src/index.ts b/devtools-ui/src/index.ts
+index 9f4b855..a2cd7c2 100644
+--- a/devtools-ui/src/index.ts
++++ b/devtools-ui/src/index.ts
+@@ -31,6 +31,9 @@ export {
+ 	type HotspotTier,
+ } from "./context";
+ 
++// Shadow DOM support
++export { setQueryRoot } from "./dom-root";
++
+ // Types
+ export type { GraphNode, GraphLink, GraphData } from "./types";
+ 
+diff --git a/devtools-ui/src/models/ThemeModel.ts b/devtools-ui/src/models/ThemeModel.ts
+index e329600..6706efa 100644
+--- a/devtools-ui/src/models/ThemeModel.ts
++++ b/devtools-ui/src/models/ThemeModel.ts
+@@ -1,4 +1,5 @@
+ import { signal, computed, effect, createModel } from "@preact/signals";
++import { getQueryRoot } from "../dom-root";
+ 
+ export type ThemeMode = "auto" | "light" | "dark";
+ 
+@@ -45,7 +46,7 @@ export const ThemeModel = createModel(() => {
+ 	// Apply data-theme attribute to the devtools container
+ 	effect(() => {
+ 		const resolved = resolvedTheme.value;
+-		const el = document.querySelector(".signals-devtools");
++		const el = getQueryRoot().querySelector(".signals-devtools");
+ 		if (el instanceof HTMLElement) {
+ 			el.dataset.theme = resolved;
+ 		}
