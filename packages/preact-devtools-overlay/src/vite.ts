@@ -12,7 +12,8 @@
  *   2. imports `preact/debug` so Preact attaches to that hook,
  *   3. imports `@preact/signals-debug` so signals are instrumented before the
  *      app creates any,
- *   4. lazily loads and mounts the `<preact-devtools-overlay>` element.
+ *   4. on the dev server, connects the agent bridge (see `bridge/server.ts`),
+ *   5. lazily loads and mounts the `<preact-devtools-overlay>` element.
  *
  * Module scripts execute in document order, so all of this runs before the
  * app's own entry module.
@@ -21,6 +22,9 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
+import { setupAgentBridge, type AgentBridgeOptions } from "./bridge/server.js";
+
+declare const __PDO_VERSION__: string;
 
 export interface PreactDevtoolsOverlayOptions {
 	/**
@@ -53,6 +57,16 @@ export interface PreactDevtoolsOverlayOptions {
 	 */
 	agentApi?: boolean;
 	/**
+	 * Relay agent API calls from the dev server to an open tab, for agents
+	 * that can't drive a browser (see the `preact-devtools-overlay-mcp` MCP
+	 * server). Adds `POST /__preact-devtools-overlay/api` and
+	 * `GET /__preact-devtools-overlay/tabs`. Both need the token the dev
+	 * server writes to the user's cache directory
+	 * (`~/.cache/preact-devtools-overlay/`) and only accept requests from
+	 * this machine. Dev server only. Defaults to `true` when `agentApi` is on.
+	 */
+	agentBridge?: boolean | AgentBridgeOptions;
+	/**
 	 * Mount the overlay UI. Pass `false` to only install the hooks (e.g. to
 	 * mount `<preact-devtools-overlay>` yourself), or an object to configure
 	 * the initial state. Adding `?devtools=off` to the page URL also skips
@@ -75,6 +89,8 @@ const CONFIG_ID = "\0preact-devtools-overlay:config";
 const distDir = path.dirname(fileURLToPath(import.meta.url));
 const clientFile = path.join(distDir, "client.js");
 const overlayFile = path.join(distDir, "index.js");
+const bridgeFile = path.join(distDir, "bridge-client.js");
+const VERSION = typeof __PDO_VERSION__ === "string" ? __PDO_VERSION__ : "0.0.0";
 const toPosix = (p: string) => p.split(path.sep).join("/");
 
 /** Node-style lookup of `node_modules/<name>` from `dir` upwards. */
@@ -107,6 +123,14 @@ export function preactDevtoolsOverlay(
 	let agentApi = options.agentApi ?? true;
 	// Vite's own endpoint (its error overlay uses it), under `base`.
 	let openInEditor: string | null = null;
+	let serve = false;
+	const bridgeOptions: AgentBridgeOptions | null =
+		options.agentBridge === false
+			? null
+			: typeof options.agentBridge === "object"
+				? options.agentBridge
+				: {};
+	const bridgeEnabled = () => serve && agentApi && bridgeOptions !== null;
 
 	return {
 		name: "preact-devtools-overlay",
@@ -116,7 +140,8 @@ export function preactDevtoolsOverlay(
 				: (_, env) => env.command === apply,
 
 		config(userConfig, env) {
-			agentApi = options.agentApi ?? env.command === "serve";
+			serve = env.command === "serve";
+			agentApi = options.agentApi ?? serve;
 			if (signals === "auto") {
 				const root = path.resolve(userConfig.root ?? process.cwd());
 				enableSignals =
@@ -154,6 +179,11 @@ export function preactDevtoolsOverlay(
 		configResolved(config) {
 			const base = /^\//.test(config.base) ? config.base : "/";
 			openInEditor = config.command === "serve" ? `${base.replace(/\/?$/, "/")}__open-in-editor` : null;
+		},
+
+		configureServer(server) {
+			if (!bridgeEnabled()) return;
+			setupAgentBridge(server, { ...bridgeOptions, version: VERSION });
 		},
 
 		resolveId(id) {
@@ -205,6 +235,15 @@ export function preactDevtoolsOverlay(
 						);
 					}
 				}
+			}
+
+			if (bridgeEnabled()) {
+				// Only Vite-served modules get `import.meta.hot`, so the page side
+				// of the bridge is connected from here.
+				lines.push(
+					`import { connectBridge } from ${JSON.stringify(toPosix(bridgeFile))};`,
+					`if (import.meta.hot) connectBridge(import.meta.hot, ${JSON.stringify({ allowUpdate: !!bridgeOptions?.allowUpdate })});`,
+				);
 			}
 
 			if (overlay !== false) {

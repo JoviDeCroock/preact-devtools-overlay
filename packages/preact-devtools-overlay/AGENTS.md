@@ -163,6 +163,46 @@ await page.evaluate(() => {
 });
 ```
 
+## Without a browser: the MCP server
+
+If you can't drive a browser, use the `preact-devtools-overlay-mcp` MCP
+server. The page still has to be open somewhere (ask the user to open it);
+the Vite dev server relays each call to that tab.
+
+```sh
+claude mcp add preact-devtools -- npx preact-devtools-overlay-mcp
+```
+
+Or in `.mcp.json`:
+
+```json
+{ "mcpServers": { "preact-devtools": { "command": "npx", "args": ["preact-devtools-overlay-mcp"] } } }
+```
+
+The tools map to the methods above and return text by default: `get_tree`,
+`find`, `inspect`, `why_did_render`, `get_renders`, `mark`, `get_signals`,
+`get_signal_updates`, `get_signal_graph`, `get_leaks`, `get_remounts`,
+`status`, `list_tabs`. Targets
+work the same, and `"#12"` is read as id 12.
+
+- It finds the running dev server whose Vite root is its working directory,
+  a parent or a subdirectory (the dev server leaves its URL and token in
+  `~/.cache/preact-devtools-overlay/`). Pass `--root <vite root>` if it
+  can't.
+- With several tabs open, calls go to the most recently focused visible tab.
+  Pass `tab` (an id from `list_tabs`, or part of the URL) to pick one.
+- To see what an interaction caused: `mark`, have the user (or an HMR
+  update) do it, then `get_renders` with `since`.
+- `update` is refused unless the project sets
+  `preactDevtoolsOverlay({ agentBridge: { allowUpdate: true } })`.
+- "No browser tab is connected": nobody has the app open, or the page isn't
+  served by this dev server. A timeout means the tab is paused in the
+  debugger, frozen in the background, or still loading.
+
+Without MCP, POST `{ method, args, tab? }` to
+`/__preact-devtools-overlay/api` with `Authorization: Bearer <token>` (from
+`server.json`). `GET /__preact-devtools-overlay/tabs` lists the tabs.
+
 ## Keeping the overlay UI out of the way
 
 For agent and CI runs, turn off the UI. The hooks and the API keep working:
