@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { preactDevtoolsOverlay, type PreactDevtoolsOverlayOptions } from "../src/vite";
 
@@ -94,6 +96,58 @@ describe("preactDevtoolsOverlay()", () => {
 		expect(await configFor({ apply: "always" }, "build")).toContain(`"agentApi":false`);
 		expect(await configFor({ apply: "always", agentApi: true }, "build")).toContain(`"agentApi":true`);
 		expect(await configFor({ agentApi: false }, "serve")).toContain(`"agentApi":false`);
+	});
+
+	it("connects the agent bridge on the dev server only", async () => {
+		const { code } = await entryFor({ signals: false });
+		expect(code).toMatch(/import \{ connectBridge \} from ".*bridge-client\.js";/);
+		expect(code).toContain(`if (import.meta.hot) connectBridge(import.meta.hot, {"allowUpdate":false});`);
+
+		const allowUpdate = await entryFor({ signals: false, agentBridge: { allowUpdate: true } });
+		expect(allowUpdate.code).toContain(`{"allowUpdate":true}`);
+
+		for (const [options, command] of [
+			[{ agentBridge: false }, "serve"],
+			[{ agentApi: false }, "serve"],
+			[{ apply: "always", agentApi: true }, "build"],
+		] as const) {
+			const { code } = await entryFor({ signals: false, ...options }, process.cwd(), command);
+			expect(code).not.toContain("connectBridge");
+		}
+	});
+
+	it("only adds the bridge endpoint when the bridge is on", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pdo-plugin-"));
+		try {
+			const configure = (options: PreactDevtoolsOverlayOptions) => {
+				const plugin = preactDevtoolsOverlay(options) as any;
+				plugin.config({ root }, { command: "serve", mode: "development" });
+				const use = vi.fn();
+				const on = vi.fn();
+				plugin.configureServer({
+					config: { root, logger: { warn() {} }, server: {} },
+					middlewares: { use },
+					ws: { on, off() {} },
+					httpServer: null,
+				});
+				return { use, on };
+			};
+			for (const options of [{ agentBridge: false }, { agentApi: false }]) {
+				const { use, on } = configure(options);
+				expect(use).not.toHaveBeenCalled();
+				expect(on).not.toHaveBeenCalled();
+			}
+			const { use, on } = configure({});
+			expect(use).toHaveBeenCalledTimes(1);
+			expect(on).toHaveBeenCalledWith("connection", expect.any(Function));
+			// Middleware mode: no URL known, but the token is there.
+			const info = JSON.parse(
+				fs.readFileSync(path.join(root, "node_modules/.cache/preact-devtools-overlay/server.json"), "utf8"),
+			);
+			expect(info).toMatchObject({ url: null, token: expect.any(String) });
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("auto-detects signals from the project root", async () => {

@@ -11,8 +11,8 @@ in a single in-page panel. No browser extension needed.
 
 - **Agent API**: the same information as data on
   `window.__PREACT_DEVTOOLS_OVERLAY__.api`, for AI coding agents and
-  scripts, including why every component rendered. See
-  [Agent API](#agent-api).
+  scripts, including why every component rendered, and an MCP server for
+  agents that can't drive a browser. See [Agent API](#agent-api).
 
 It ships as a `<preact-devtools-overlay>` web component plus a Vite plugin
 that wires everything up.
@@ -64,6 +64,9 @@ preactDevtoolsOverlay({
 	// Expose window.__PREACT_DEVTOOLS_OVERLAY__.api and record renders.
 	// Default: true on the dev server, false in builds.
 	agentApi: true,
+	// Let the MCP server reach the API through the dev server (see below).
+	// Default: true when agentApi is on. Dev server only.
+	agentBridge: { allowRemote: false, allowUpdate: false, timeout: 10_000 },
 	// false to only install the hooks (the agent API keeps working),
 	// or the initial UI state.
 	overlay: { open: false, tab: "components", position: "bottom-right" },
@@ -100,6 +103,77 @@ of screenshots and away from clicks. Recording renders adds a little work to
 every commit. Turn it off with `agentApi: false`. Without Vite, set
 `window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = { agentApi: false }` before the
 client loads.
+
+### MCP server, for agents without a browser
+
+An agent that can't drive a browser can still read the devtools of a page
+that someone has open. The package ships a stdio MCP server,
+`preact-devtools-overlay-mcp`. It asks the Vite dev server, and the dev
+server relays the call to the tab over its HMR websocket:
+
+```txt
+agent ─MCP─► preact-devtools-overlay-mcp ─HTTP─► vite dev server ─HMR websocket─► tab: api.getTree()
+```
+
+Claude Code, from the project directory:
+
+```sh
+claude mcp add preact-devtools -- npx preact-devtools-overlay-mcp
+```
+
+Or in `.mcp.json` (most other clients use the same shape):
+
+```json
+{
+	"mcpServers": {
+		"preact-devtools": {
+			"command": "npx",
+			"args": ["preact-devtools-overlay-mcp"]
+		}
+	}
+}
+```
+
+Tools: `list_tabs`, `get_tree`, `find`, `inspect`, `why_did_render`,
+`get_renders`, `mark`, `get_signals`, `get_signal_updates`,
+`get_signal_graph`, `status` and `update`. They return the compact text
+format by default.
+
+- **Finding the dev server.** On startup the dev server writes its URL and a
+  random token to `node_modules/.cache/preact-devtools-overlay/server.json`
+  under the Vite root, readable only by your user. The MCP server looks for
+  that file in its working directory, the parents, and two levels of
+  subdirectories (for monorepos). Pass `--root apps/web` to point it
+  somewhere else, or `--url` and `--token`. The file is read on every call,
+  so restarting Vite is fine.
+- **Which tab.** Every page served by the dev server registers itself with
+  its URL, title, visibility and focus. Calls go to the most recently focused
+  visible tab. Every tool takes a `tab` argument: an id from `list_tabs`, or
+  part of the URL (`"/settings"`).
+- **Security.** The endpoints (`POST /__preact-devtools-overlay/api` and
+  `GET /__preact-devtools-overlay/tabs`) run code in your page, and the dev
+  server is reachable from your network with `--host`. So they need the
+  token, only accept connections from this machine, and refuse requests that
+  carry an `Origin` header (that is, requests from web pages). Tabs opened
+  from other machines are not registered either. Set
+  `agentBridge: { allowRemote: true }` to accept both from the network; the
+  token is still required. `update()` changes app state, so the bridge
+  refuses it unless you set `agentBridge: { allowUpdate: true }`.
+  `agentBridge: false` turns the endpoints off.
+- **Limits.** The page must be open, and answer within 10 seconds
+  (`agentBridge.timeout`); a tab paused in the debugger or frozen in the
+  background times out. With `server.https`, Node has to trust the
+  certificate (`NODE_EXTRA_CA_CERTS`). In Vite's middleware mode the dev
+  server doesn't know its URL, so pass `--url`.
+
+Without MCP, any HTTP client works:
+
+```sh
+TOKEN=$(node -p 'require("./node_modules/.cache/preact-devtools-overlay/server.json").token')
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5173/__preact-devtools-overlay/api \
+	-d '{ "method": "getTree", "args": [{ "format": "text" }] }'
+# { "ok": true, "result": "App #1938\n  Counter #1939\n…", "tab": { "id": "1", "url": "http://localhost:5173/", … } }
+```
 
 ## Usage without Vite
 
@@ -236,7 +310,7 @@ pnpm build          # build the package
 pnpm dev            # watch-build the package + run the playground (/?rows=200 for a big tree)
 pnpm test           # unit tests (vitest)
 pnpm test:types     # strict consumer check of the published types
-pnpm test:e2e       # Playwright tests against the playground (Chromium + Firefox)
+pnpm test:e2e       # Playwright tests against the playground (Chromium + Firefox, port 5297 or $E2E_PORT)
 pnpm typecheck
 ```
 

@@ -4,6 +4,8 @@
 //   dist/index.js   – <preact-devtools-overlay> element + mount API (browser, self-contained)
 //   dist/auto.js    – side-effect import that mounts the overlay
 //   dist/vite.js    – Vite plugin (node)
+//   dist/bridge-client.js – page side of the agent bridge, loaded by the Vite plugin
+//   dist/mcp.js     – MCP server (node), started by dist/mcp-cli.js
 //
 // The browser bundles deliberately include their *own* copy of preact and
 // @preact/signals. The devtools UI must never render with the app's Preact
@@ -77,10 +79,15 @@ await build(browserBuild({ client: r("src/client.ts") }, false));
 await build(
 	browserBuild({ index: r("src/index.ts"), auto: r("src/auto.ts") }, false),
 );
+// Page side of the agent bridge, imported by the Vite plugin's entry module.
+await build(browserBuild({ "bridge-client": r("src/bridge/page.ts") }, false));
 await build({
 	configFile: false,
 	root,
 	logLevel: "warn",
+	define: {
+		__PDO_VERSION__: JSON.stringify(pkg.version),
+	},
 	build: {
 		outDir: "dist",
 		emptyOutDir: false,
@@ -90,15 +97,24 @@ await build({
 		copyPublicDir: false,
 		watch: watch ? {} : null,
 		lib: {
-			entry: { vite: r("src/vite.ts") },
+			entry: { vite: r("src/vite.ts"), mcp: r("src/mcp.ts") },
 			formats: ["es"],
 			fileName: (_format, name) => `${name}.js`,
 		},
 		rolldownOptions: {
 			external: [/^node:/, /^vite($|\/)/],
+			output: { chunkFileNames: "chunks/[name]-[hash].js" },
 		},
 	},
 });
+
+// The `preact-devtools-overlay-mcp` bin.
+fs.writeFileSync(
+	r("dist/mcp-cli.js"),
+	`#!/usr/bin/env node\nimport { runMcpServer } from "./mcp.js";\n\nrunMcpServer();\n`,
+	{ mode: 0o755 },
+);
+fs.chmodSync(r("dist/mcp-cli.js"), 0o755);
 
 if (!watch) {
 	execFileSync(
@@ -106,8 +122,8 @@ if (!watch) {
 		["-p", "tsconfig.build.json"],
 		{ stdio: "inherit", cwd: root },
 	);
-	for (const file of ["client.js", "index.js", "auto.js", "vite.js"]) {
+	for (const file of ["client.js", "index.js", "auto.js", "bridge-client.js", "vite.js", "mcp.js"]) {
 		const size = fs.statSync(r("dist", file)).size;
-		console.log(`dist/${file.padEnd(10)} ${(size / 1024).toFixed(1)} kB`);
+		console.log(`dist/${file.padEnd(16)} ${(size / 1024).toFixed(1)} kB`);
 	}
 }
