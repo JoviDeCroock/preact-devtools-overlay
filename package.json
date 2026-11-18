@@ -1,0 +1,15 @@
+{
+	"name": "preact-devtools-overlay-monorepo",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@12.16.1",
+	"scripts": {
+		"build": "pnpm --filter preact-devtools-overlay build",
+		"dev": "pnpm --filter preact-devtools-overlay build --watch & pnpm --filter playground dev",
+		"typecheck": "pnpm -r typecheck",
+		"test": "pnpm --filter preact-devtools-overlay test",
+		"test:e2e": "pnpm --filter playground test:e2e",
+		"sync-upstream": "node scripts/sync-upstream.mjs",
+		"check-upstream": "node scripts/sync-upstream.mjs --check"
+	}
+}
