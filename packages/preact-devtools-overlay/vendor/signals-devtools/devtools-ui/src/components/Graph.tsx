@@ -169,8 +169,7 @@ export function GraphVisualization() {
 			if (
 				showExportMenu.value &&
 				exportMenuRef.current &&
-				// composedPath() so clicks inside a shadow root are not retargeted
-				!e.composedPath().includes(exportMenuRef.current)
+				!exportMenuRef.current.contains(e.target as Node)
 			) {
 				showExportMenu.value = false;
 			}

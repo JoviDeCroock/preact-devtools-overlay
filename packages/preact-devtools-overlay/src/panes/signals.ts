@@ -2,11 +2,7 @@
  * "Signals" pane: the upstream @preact/signals devtools UI, connected to
  * `@preact/signals-debug` running in the same window via the direct adapter.
  */
-import {
-	getContext,
-	mount,
-	setQueryRoot,
-} from "../../vendor/signals-devtools/devtools-ui/src/index";
+import { getContext, mount } from "../../vendor/signals-devtools/devtools-ui/src/index";
 import { createDirectAdapter } from "../../vendor/signals-devtools/devtools-adapter/src/index";
 import "../../vendor/signals-devtools/devtools-ui/src/styles.css";
 import { createStyleElement } from "../styles-registry.js";
@@ -32,9 +28,6 @@ export async function mountSignalsPane(
 	const container = doc.createElement("div");
 	container.className = "pdo-root";
 	shadow.appendChild(container);
-
-	// Let the (patched) theme model find `.signals-devtools` in our shadow tree.
-	setQueryRoot(shadow);
 
 	// `mount()` waits (up to 10s) for `@preact/signals-debug` to show up
 	// before rendering anything. Explain what's going on in the meantime;
@@ -69,7 +62,6 @@ export async function mountSignalsPane(
 		destroy() {
 			// Also disconnects the adapter.
 			unmount();
-			setQueryRoot(null);
 			shadow.replaceChildren();
 		},
 	};

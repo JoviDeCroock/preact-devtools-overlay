@@ -1,3 +1,6 @@
+import { consumedContexts } from "../src/agent/contexts";
+import { createRenderContext } from "../src/agent/registry";
+import { instrumentRenders } from "../src/agent/render-log";
 import { describe, expect, it, vi } from "vitest";
 import { RingBuffer } from "../src/agent/ring-buffer";
 import { describeChange, fitToBudget, fromSerialized, preview, toAgentValue } from "../src/agent/values";
@@ -235,6 +238,76 @@ describe("ComponentTree", () => {
 		expect(tree.get(10)!.children).toEqual([]);
 	});
 
+	it("reports components that unmount and mount again in one commit", () => {
+		const tree = new ComponentTree();
+		tree.apply(mount);
+		const res = tree.apply(
+			ops(1, ["Item", "b"], [
+				3, 2, 12, 13, // REMOVE both items
+				2, 20, 3, 11, 11, 1, 2, 0, 0, // ADD Item key "b"
+				2, 21, 3, 11, 11, 1, 0, 0, 0, // ADD Item, no key
+			]),
+		);
+		expect(res.remounts).toEqual([
+			{ id: 20, name: "Item", parent: 11, prevKey: "a", key: "b" },
+			{ id: 21, name: "Item", parent: 11, prevKey: "", key: "" },
+		]);
+		// A replaced parent is the remount, not each of its children.
+		const res2 = tree.apply(
+			ops(1, ["App", "Item"], [3, 1, 11, 2, 30, 3, 10, 10, 1, 0, 0, 0, 2, 31, 3, 30, 30, 2, 0, 0, 0]),
+		);
+		expect(res2.remounts.map(r => r.id)).toEqual([30]);
+	});
+
+	it("doesn't call a keyed list change a remount", () => {
+		const tree = new ComponentTree();
+		const n = ["Fragment", "App", "Item", "a", "b", "c"];
+		tree.apply(
+			ops(1, n, [
+				1, 10,
+				2, 10, 0, -1, -1, str(n, "Fragment"), 0, 0, 0,
+				2, 11, 3, 10, 10, str(n, "App"), 0, 0, 0,
+				2, 12, 3, 11, 11, str(n, "Item"), str(n, "a"), 0, 0,
+				2, 13, 3, 11, 11, str(n, "Item"), str(n, "b"), 0, 0,
+			]),
+		);
+		// a, b → b, c: "a" went away and "c" is new.
+		const res = tree.apply(ops(1, n, [3, 1, 12, 2, 20, 3, 11, 11, str(n, "Item"), str(n, "c"), 0, 0]));
+		expect(res.remounts).toEqual([]);
+		// Every item replaced with a new key in place: unstable keys.
+		const n2 = [...n, "d", "e"];
+		const res2 = tree.apply(
+			ops(1, n2, [
+				3, 2, 13, 20,
+				2, 21, 3, 11, 11, str(n2, "Item"), str(n2, "d"), 0, 0,
+				2, 22, 3, 11, 11, str(n2, "Item"), str(n2, "e"), 0, 0,
+			]),
+		);
+		expect(res2.remounts.map(r => [r.prevKey, r.key])).toEqual([
+			["b", "d"],
+			["c", "e"],
+		]);
+		// A stable sibling doesn't hide one with an unstable key.
+		const res3 = tree.apply(ops(1, n2, [3, 1, 22, 2, 23, 3, 11, 11, str(n2, "Item"), str(n2, "a"), 0, 0]));
+		expect(res3.remounts.map(r => [r.prevKey, r.key])).toEqual([["e", "a"]]);
+	});
+
+	it("matches remounts in linear time", () => {
+		const tree = new ComponentTree();
+		const N = 10_000;
+		const keys = Array.from({ length: 2 * N }, (_, i) => `k${i}`);
+		const n = ["Fragment", "App", "Item", ...keys];
+		const body = [1, 10, 2, 10, 0, -1, -1, 1, 0, 0, 0, 2, 11, 3, 10, 10, 2, 0, 0, 0];
+		for (let i = 0; i < N; i++) body.push(2, 100 + i, 3, 11, 11, 3, 4 + i, 0, 0);
+		tree.apply(ops(1, n, body));
+		const replace = [3, N, ...Array.from({ length: N }, (_, i) => 100 + i)];
+		for (let i = 0; i < N; i++) replace.push(2, 100 + N + i, 3, 11, 11, 3, 4 + N + i, 0, 0);
+		const t = performance.now();
+		const res = tree.apply(ops(1, n, replace));
+		expect(performance.now() - t).toBeLessThan(1000);
+		expect(res.remounts).toHaveLength(N);
+	});
+
 	it("throws on unknown operations", () => {
 		expect(() => new ComponentTree().apply(ops(1, [], [99]))).toThrow(/Unknown devtools operation/);
 	});
@@ -350,5 +423,46 @@ describe("SignalsStore", () => {
 		store.attach(b as any);
 		expect(a.listeners.size).toBe(0);
 		expect(b.listeners.size).toBe(1);
+	});
+});
+
+describe("consumedContexts", () => {
+	it("understands Preact <= 10.24 contexts, which are objects", () => {
+		const ctx = { __c: "__cC7", __: "fallback", Provider() {}, Consumer() {}, displayName: "Old" };
+		const provider = { props: { value: "provided" } };
+		const found = consumedContexts({ __n: { __cC7: provider } }, [{ c: ctx }]);
+		expect([...found.values()]).toEqual([{ context: ctx, name: "Old", provider, value: "provided" }]);
+		expect([...consumedContexts({ __n: {} }, [{ c: ctx }]).values()][0].value).toBe("fallback");
+		// Hook state that merely holds an object with a similar id isn't a context.
+		expect(consumedContexts({ __n: {} }, [{ c: { __c: "__cC7" } }]).size).toBe(0);
+	});
+});
+
+describe("instrumentRenders", () => {
+	it("doesn't attribute what pending effects create when preact/hooks flushes them", () => {
+		const rendering = createRenderContext();
+		const o: any = { __e() {} };
+		const bindings = { getComponent: (v: any) => v.__c, getDisplayName: () => "Comp" };
+		instrumentRenders(o, { Fragment: () => null } as any, bindings as any, () => {}, () => 1, { rendering });
+		// Only mangled names: a stale unmangled `_hook` made the devtools
+		// adapter skip @preact/signals' hook when it re-wrapped.
+		expect(Object.keys(o).filter(k => /^_[a-z]/.test(k))).toEqual([]);
+		// preact/hooks, installed after us: calls us, then runs pending effects.
+		const ours = o.__r;
+		o.__r = (v: any) => {
+			ours(v);
+			for (const state of v.__c.__H.__h) state.__();
+			v.__c.__H.__h = [];
+		};
+		const seen: unknown[] = [];
+		const c = { __H: { __: [], __h: [{ __: () => seen.push([rendering.component, rendering.suspended]) }] } };
+		const vnode = { type: function Comp() {}, __c: c };
+		o.__b(vnode);
+		o.__r(vnode);
+		expect(seen).toEqual([[c, 1]]);
+		expect(rendering).toMatchObject({ component: c, name: "Comp", suspended: 0 });
+		// A throw clears it.
+		o.__e(new Error("x"), vnode);
+		expect(rendering.component).toBeNull();
 	});
 });

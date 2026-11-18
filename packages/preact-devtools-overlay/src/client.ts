@@ -23,10 +23,12 @@ import {
 	MAX_SESSION_EVENTS,
 	type OverlayClientState,
 } from "./shared.js";
-import { ComponentTree } from "./agent/tree.js";
+import { ComponentTree, type Remount } from "./agent/tree.js";
+import { SignalRegistry, createRenderContext } from "./agent/registry.js";
+import { describeChange, toAgentValue } from "./agent/values.js";
 import { RingBuffer } from "./agent/ring-buffer.js";
 import { instrumentRenders, type RenderLogEntry } from "./agent/render-log.js";
-import { SignalsStore, watchSignalsDebug } from "./agent/signals.js";
+import { SignalsStore, watchSignalsDebug, type SignalUpdate } from "./agent/signals.js";
 import { createAgentApi } from "./agent/api.js";
 
 declare const __PDO_VERSION__: string;
@@ -38,6 +40,8 @@ export type { RenderReason } from "./agent/render-types.js";
 export type { OverlayClientState, OverlayClientConfig } from "./shared.js";
 
 export const MAX_RENDER_LOG = 500;
+/** Remounts kept for the agent API. */
+export const MAX_REMOUNTS = 200;
 
 function install() {
 	if (window.__PREACT_DEVTOOLS_OVERLAY__) return;
@@ -77,11 +81,15 @@ function install() {
 	// Agent API: a page-side copy of the component tree, fed by the same
 	// messages the Components panel receives.
 	const tree = new ComponentTree();
+	const remounts = new RingBuffer<Remount & { time: number; path: string }>(MAX_REMOUNTS, nextSeq);
 	let treeBroken = false;
 	const onHookEvent = (type: string, data: unknown) => {
 		if (type !== "operation_v2" || treeBroken || !Array.isArray(data)) return;
 		try {
-			tree.apply(data);
+			const applied = tree.apply(data);
+			for (const r of applied.remounts) {
+				remounts.push({ ...r, time: performance.now(), path: tree.path(r.id).join(" > ") });
+			}
 		} catch (err) {
 			// A message we can't decode means the tree is out of sync for good.
 			treeBroken = true;
@@ -128,6 +136,9 @@ function install() {
 		const hook = window.__PREACT_DEVTOOLS__;
 		const renders = new RingBuffer<RenderLogEntry>(MAX_RENDER_LOG, nextSeq);
 		let commit = 0;
+		const rendering = createRenderContext();
+		const registry = new SignalRegistry(rendering);
+		state.registry = registry;
 		const attachPreact = hook?.attachPreact;
 		if (typeof attachPreact === "function") {
 			try {
@@ -141,6 +152,7 @@ function install() {
 								/^11\./.test(String(version)) ? bindingsV11 : bindingsV10,
 								entries => entries.forEach(e => renders.push(e)),
 								() => ++commit,
+								{ rendering, onRerender: c => registry.rerendered(c), onUnmount: c => registry.unmounted(c) },
 							);
 						} catch (err) {
 							console.warn("[preact-devtools-overlay] agent API: could not record renders.", err);
@@ -157,6 +169,8 @@ function install() {
 			tree,
 			renders,
 			signals: state.signals!,
+			registry,
+			remounts,
 			getRenderers: () => (hook?.renderers instanceof Map ? hook.renderers.values() : []),
 			currentSeq: () => seq,
 			version: __PDO_VERSION__,
@@ -187,9 +201,11 @@ if (typeof window !== "undefined") {
  */
 export function configureSignalsDebug(
 	setDebugOptions: (options: { consoleLogging?: boolean }) => void,
-	options: { consoleLogging?: boolean } = {},
+	options: { consoleLogging?: boolean | "compact" } = {},
 ) {
-	const config = { consoleLogging: options.consoleLogging ?? false };
+	const compact = options.consoleLogging === "compact";
+	const config = { consoleLogging: options.consoleLogging === true };
+	if (compact) logCompactly();
 	// Synchronously, so it applies to signals created right after this call.
 	setDebugOptions(config);
 	if (typeof window !== "undefined") {
@@ -200,5 +216,53 @@ export function configureSignalsDebug(
 			{ type: "CONFIGURE_DEBUG", payload: config },
 			window.location.origin,
 		);
+	}
+}
+
+let compactLogging = false;
+
+/**
+ * One line per signal update instead of signals-debug's grouped, emoji
+ * console output, which flattens badly in Playwright/CDP console capture.
+ */
+function logCompactly() {
+	const store = typeof window !== "undefined" ? window.__PREACT_DEVTOOLS_OVERLAY__?.signals : null;
+	if (compactLogging || !store) return;
+	compactLogging = true;
+	const via = (u: SignalUpdate) => {
+		if (!u.subscribedTo) return "";
+		return ` (${store.known.get(u.subscribedTo)?.name ?? u.subscribedTo})`;
+	};
+	store.onUpdates((updates: SignalUpdate[]) => {
+		for (const u of updates) {
+			if (u.type === "update") {
+				const lines = describeChange(u.signalName, toAgentValue(u.prevValue), toAgentValue(u.newValue));
+				console.log(`[signals] ${u.signalType} ${lines.join(", ")}`);
+			} else if (u.type === "component") {
+				console.log(`[signals] ${u.signalName} re-rendered${via(u)}`);
+			} else {
+				console.log(`[signals] effect ${u.signalName} ran${via(u)}`);
+			}
+		}
+	});
+}
+
+/**
+ * Tracks every signal, computed and effect from now on (the agent API's
+ * `getSignals()` inventory and `getLeaks()`). Call it before your app creates
+ * any signals, with the classes your app uses:
+ *
+ *   import { Signal, computed, effect } from "@preact/signals";
+ *   trackSignals(Signal, effect, computed);
+ *
+ * The Vite plugin does this for you. Returns whether tracking is active.
+ */
+export function trackSignals(Signal: unknown, effect: unknown, computed?: unknown): boolean {
+	const registry = typeof window !== "undefined" ? window.__PREACT_DEVTOOLS_OVERLAY__?.registry : null;
+	if (!registry) return false;
+	try {
+		return registry.install(Signal, effect, computed);
+	} catch {
+		return false;
 	}
 }

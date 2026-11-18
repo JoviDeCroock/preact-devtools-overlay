@@ -92,6 +92,7 @@ export interface KnownSignal {
 }
 
 export const SIGNALS_GLOBAL = "__PREACT_SIGNALS_DEVTOOLS__";
+export const PROBE_EFFECT_NAME = "preact-devtools-overlay:probe";
 /** Updates kept for the agent API and for replay into the Signals pane. */
 export const MAX_SIGNAL_UPDATES = 2000;
 /** Upper bound for `known`, so a page creating signals in a loop can't grow it forever. */
@@ -125,14 +126,29 @@ export class SignalsStore {
 		}
 	}
 
+	/** Called with every batch of updates (after it was recorded). */
+	onUpdates(cb: (updates: SignalUpdate[]) => void): () => void {
+		this.#updateListeners.add(cb);
+		return () => this.#updateListeners.delete(cb);
+	}
+
 	#onUpdates(updates: SignalUpdate[]) {
-		if (!Array.isArray(updates) || updates.length === 0) return;
+		if (!Array.isArray(updates)) return;
+		// Our own probe effect (registry.ts), created before the app runs.
+		updates = updates.filter(u => u?.signalName !== PROBE_EFFECT_NAME);
+		if (updates.length === 0) return;
 		const batch = ++this.#batch;
 		for (const update of updates) {
 			this.updates.push({ batch, update });
 			this.#track(update);
 		}
-		this.#updateListeners.forEach(cb => cb(updates));
+		this.#updateListeners.forEach(cb => {
+			try {
+				cb(updates);
+			} catch {
+				// A listener must not stop the others (or signals-debug).
+			}
+		});
 	}
 
 	#onDisposals(disposals: SignalDisposal[]) {

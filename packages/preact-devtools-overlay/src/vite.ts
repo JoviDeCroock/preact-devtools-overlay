@@ -40,9 +40,11 @@ export interface PreactDevtoolsOverlayOptions {
 	/**
 	 * `@preact/signals-debug` logs every signal update to the console by
 	 * default. That is noisy next to a visual panel, so this defaults to
-	 * `false`.
+	 * `false`. `"compact"` logs one plain line per update instead
+	 * (`[signals] signal count: 0 → 1`), which reads well in captured console
+	 * output (Playwright, CDP, agents).
 	 */
-	signalsConsoleLogging?: boolean;
+	signalsConsoleLogging?: boolean | "compact";
 	/**
 	 * Expose `window.__PREACT_DEVTOOLS_OVERLAY__.api` (component tree, render
 	 * log with reasons, signals) for AI coding agents and scripts. Recording
@@ -53,7 +55,8 @@ export interface PreactDevtoolsOverlayOptions {
 	/**
 	 * Mount the overlay UI. Pass `false` to only install the hooks (e.g. to
 	 * mount `<preact-devtools-overlay>` yourself), or an object to configure
-	 * the initial state.
+	 * the initial state. Adding `?devtools=off` to the page URL also skips
+	 * the UI for that page load.
 	 */
 	overlay?:
 		| boolean
@@ -99,6 +102,8 @@ export function preactDevtoolsOverlay(
 	} = options;
 
 	let enableSignals = signals === true;
+	// The package the app gets `Signal` from, for `trackSignals()`.
+	let signalsPackage: string | null = null;
 	let agentApi = options.agentApi ?? true;
 
 	return {
@@ -116,6 +121,17 @@ export function preactDevtoolsOverlay(
 					hasPackage(root, "@preact/signals") ||
 					hasPackage(root, "@preact/signals-core");
 			}
+			signalsPackage = null;
+			if (enableSignals && agentApi) {
+				const root = path.resolve(userConfig.root ?? process.cwd());
+				// Prefer the core (no Preact options hooks of its own); either
+				// exports the same `Signal` the app uses.
+				signalsPackage = hasPackage(root, "@preact/signals-core")
+					? "@preact/signals-core"
+					: hasPackage(root, "@preact/signals")
+						? "@preact/signals"
+						: null;
+			}
 			return {
 				optimizeDeps: {
 					// Pre-bundle these together with the app's dependencies so they
@@ -125,6 +141,7 @@ export function preactDevtoolsOverlay(
 						...(enableSignals
 							? ["preact-devtools-overlay > @preact/signals-debug"]
 							: []),
+						...(signalsPackage ? [signalsPackage] : []),
 					],
 					// Already bundled, self-contained ESM.
 					exclude: ["preact-devtools-overlay"],
@@ -168,8 +185,17 @@ export function preactDevtoolsOverlay(
 					lines.push(
 						`import { setDebugOptions } from ${JSON.stringify(debug.id)};`,
 						`import { configureSignalsDebug } from ${JSON.stringify(toPosix(clientFile))};`,
-						`configureSignalsDebug(setDebugOptions, { consoleLogging: ${!!signalsConsoleLogging} });`,
+						`configureSignalsDebug(setDebugOptions, { consoleLogging: ${JSON.stringify(signalsConsoleLogging === "compact" ? "compact" : !!signalsConsoleLogging)} });`,
 					);
+					if (signalsPackage) {
+						// Before the app creates any signals: the full inventory and
+						// the leak checks of the agent API.
+						lines.push(
+							`import { Signal as __pdoSignal, effect as __pdoEffect, computed as __pdoComputed } from ${JSON.stringify(signalsPackage)};`,
+							`import { trackSignals } from ${JSON.stringify(toPosix(clientFile))};`,
+							`trackSignals(__pdoSignal, __pdoEffect, __pdoComputed);`,
+						);
+					}
 				}
 			}
 
@@ -177,7 +203,7 @@ export function preactDevtoolsOverlay(
 				const mountOptions = typeof overlay === "object" ? overlay : {};
 				lines.push(
 					// Loaded lazily so the overlay never delays the app's own startup.
-					`import(${JSON.stringify(toPosix(overlayFile))}).then(m => m.mountOverlay(${JSON.stringify(mountOptions)}));`,
+					`if (!/[?&]devtools=off(&|$)/.test(location.search)) import(${JSON.stringify(toPosix(overlayFile))}).then(m => m.mountOverlay(${JSON.stringify(mountOptions)}));`,
 				);
 			}
 

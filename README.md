@@ -60,12 +60,14 @@ preactDevtoolsOverlay({
 	// `@preact/signals-core` is installed.
 	signals: "auto",
 	// signals-debug logs every update to the console by default. Default: false
+	// "compact": one plain line per update instead, e.g. for agents reading
+	// captured console output.
 	signalsConsoleLogging: false,
 	// Expose window.__PREACT_DEVTOOLS_OVERLAY__.api and record renders.
 	// Default: true on the dev server, false in builds.
 	agentApi: true,
 	// false to only install the hooks (the agent API keeps working),
-	// or the initial UI state.
+	// or the initial UI state. `?devtools=off` in the URL also skips the UI.
 	overlay: { open: false, tab: "components", position: "bottom-right" },
 });
 ```
@@ -84,20 +86,24 @@ const since = api.mark();
 // …click something…
 api.getRenders({ since, format: "text" });
 // [20] commit 4: TodoItem #1942 props (todo.done: false → true) 0ms
-api.getSignals({ format: "text" });       // values and which components read them
+api.getSignals({ format: "text" });       // every signal: value, subscribers, readers, creator
+api.getRemounts({ format: "text" });      // components remounted by unstable keys
+api.getLeaks({ format: "text" });         // effects that outlive their component
 api.update("Counter", "hook", 0, 41);     // edit state to test a hypothesis
 ```
 
 Renders (with the reason: `mount`, `signal`, `hooks`, `state`, `props`,
-`parent` or `force`, plus the values that changed) and signal updates are
-recorded from page load, before any panel is opened. `api.help()` lists
+`context`, `parent` or `force`, plus the values that changed) and signal
+updates are recorded from page load, before any panel is opened. `api.help()` lists
 every method. [`AGENTS.md`](./packages/preact-devtools-overlay/AGENTS.md)
 (also shipped in the npm package) has copy-paste recipes; point your agent
 at it.
 
-For agent and CI runs, pass `overlay: false` to keep the launcher button out
-of screenshots and away from clicks. Recording renders adds a little work to
-every commit. Turn it off with `agentApi: false`. Without Vite, set
+For agent and CI runs, pass `overlay: false` (or open the page with
+`?devtools=off`) to keep the launcher button out of screenshots and away from
+clicks. Recording renders adds a little work to every component render: about
+1.5µs, or 8% (3ms) when re-rendering 2,000 components in the playground
+(`node playground/bench/agent-api.mjs`). Turn it off with `agentApi: false`. Without Vite, set
 `window.__PREACT_DEVTOOLS_OVERLAY_CONFIG__ = { agentApi: false }` before the
 client loads.
 
@@ -116,11 +122,13 @@ Then put this at the very top of your entry file:
 
 ```ts
 // Must come first: installs window.__PREACT_DEVTOOLS__.
-import { configureSignalsDebug } from "preact-devtools-overlay/client";
+import { configureSignalsDebug, trackSignals } from "preact-devtools-overlay/client";
 import "preact/debug";
 // Only if you use signals:
 import { setDebugOptions } from "@preact/signals-debug";
+import { Signal, computed, effect } from "@preact/signals";
 configureSignalsDebug(setDebugOptions, { consoleLogging: false });
+trackSignals(Signal, effect, computed); // signal inventory and leak checks (agent API)
 
 import "preact-devtools-overlay/auto"; // mounts the overlay UI
 ```
@@ -184,20 +192,21 @@ parts.
 - The agent API keeps its own copy of the component tree, decoded from the
   same messages the Components pane receives. It also adds `options` hooks
   next to the adapter's to record why each component rendered.
+  `trackSignals()` adds a setter on the prototypes of signals-core's
+  `Signal`, `Computed` and `Effect` for the first field their constructors
+  assign. It runs once per instance, registers it (weakly) and turns into a
+  plain property. That gives the full signal inventory and tells which
+  component created which effect.
 
 ## Upstream code
 
 The devtools UIs are vendored from upstream at pinned commits (see
 [`upstream.json`](./upstream.json)) into
-`packages/preact-devtools-overlay/vendor/`, with a few small patches for
-Shadow DOM support in [`patches/`](./patches):
-
-| Patch | Why |
-| --- | --- |
-| `preact-devtools/0001-shadow-dom-support.patch` | The theme class was put on `document.body`, which can't style anything inside a shadow root. `useResize` also listens for a `preact-devtools:container-resize` event, so the virtualized tree re-measures when the drawer (not the window) changes size. |
-| `signals/0001-shadow-dom-support.patch` | The theme model used `document.querySelector`, which can't see into a shadow root, and it ran before the panel existed, so a stored theme wasn't applied on first render. The graph's click-outside handler used `e.target`, which is retargeted to the shadow host, so the export menu closed on any click. |
-
-`vendor/` is committed with the patches already applied.
+`packages/preact-devtools-overlay/vendor/`. Both upstreams support being
+embedded in a shadow root (preactjs/preact-devtools#527,
+preactjs/signals#1005), so there are currently no local patches. If one is
+needed again, put it in `patches/<name>/*.patch`. The sync script applies
+patches in lexical order, and `vendor/` is committed with them applied.
 
 ```sh
 # Update upstream: bump the ref in upstream.json, then

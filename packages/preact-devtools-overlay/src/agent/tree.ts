@@ -49,12 +49,51 @@ export interface TreeNode {
 	hocs: string[] | null;
 }
 
+export interface Remount {
+	/** Id of the new instance. */
+	id: number;
+	name: string;
+	parent: number;
+	prevKey: string;
+	key: string;
+}
+
 export interface AppliedCommit {
 	rootId: number;
 	/** Nodes that rendered in this commit (mounted or updated). */
 	rendered: number[];
 	mounted: number[];
 	unmounted: number[];
+	/**
+	 * Components that unmounted and mounted again (same name, same parent) in
+	 * this commit: usually an unstable or missing `key`, or a component type
+	 * created during render.
+	 */
+	remounts: Remount[];
+}
+
+interface Removed {
+	key: string;
+	matched: boolean;
+}
+
+/** Top-most nodes removed in a commit whose parent stays. */
+class RemovedNodes {
+	/** By parent, name and key. */
+	byKey = new Map<string, Removed[]>();
+	/** By parent, name and position among the parent's children. */
+	byPosition = new Map<string, Removed>();
+	/** Children positions before this commit removed any, per parent. */
+	positions = new Map<number, Map<number, number>>();
+	size = 0;
+}
+
+const slot = (parent: number, name: string, x: string | number) => `${parent}\0${name}\0${x}`;
+
+function indexOf(children: number[]): Map<number, number> {
+	const out = new Map<number, number>();
+	children.forEach((id, i) => out.set(id, i));
+	return out;
 }
 
 export class ComponentTree {
@@ -92,7 +131,8 @@ export class ComponentTree {
 	apply(ops: number[]): AppliedCommit {
 		this.version++;
 		const rootId = ops[0];
-		const result: AppliedCommit = { rootId, rendered: [], mounted: [], unmounted: [] };
+		const result: AppliedCommit = { rootId, rendered: [], mounted: [], unmounted: [], remounts: [] };
+		const removed = new RemovedNodes();
 
 		let i = ops[1] + 1;
 		const strings = parseTable(ops.slice(1, i + 1));
@@ -134,7 +174,7 @@ export class ComponentTree {
 					const count = ops[i + 1];
 					i += 2;
 					const end = i + count;
-					for (; i < end; i++) this.#remove(ops[i], result);
+					for (; i < end; i++) this.#remove(ops[i], result, removed);
 					// The outer loop increments `i` once more.
 					if (count > 0) i--;
 					break;
@@ -168,13 +208,60 @@ export class ComponentTree {
 			}
 		}
 
+		if (removed.size > 0) {
+			const found = new Map<number, Removed>();
+			const nodes = result.mounted
+				.map(id => this.nodes.get(id)!)
+				.filter(node => node && node.kind !== "element" && node.kind !== "group" && this.nodes.has(node.parent));
+			// Same key first: a type created during render, or no key at all.
+			for (const node of nodes) {
+				const list = removed.byKey.get(slot(node.parent, node.name, node.key));
+				while (list?.length && list[0].matched) list.shift();
+				const match = list?.shift();
+				if (!match) continue;
+				match.matched = true;
+				found.set(node.id, match);
+			}
+			// A different key in the same position: keys made up during render
+			// (`key={Math.random()}`). A different key elsewhere is a different
+			// item (`a, b` → `b, c`).
+			const positions = new Map<number, Map<number, number>>();
+			for (const node of nodes) {
+				if (found.has(node.id)) continue;
+				let index = positions.get(node.parent);
+				if (!index) positions.set(node.parent, (index = indexOf(this.nodes.get(node.parent)!.children)));
+				const match = removed.byPosition.get(slot(node.parent, node.name, index.get(node.id) ?? -1));
+				if (!match || match.matched) continue;
+				match.matched = true;
+				found.set(node.id, match);
+			}
+			for (const node of nodes) {
+				const match = found.get(node.id);
+				if (match) {
+					result.remounts.push({ id: node.id, name: node.name, parent: node.parent, prevKey: match.key, key: node.key });
+				}
+			}
+		}
+
 		return result;
 	}
 
-	#remove(id: number, result: AppliedCommit) {
+	#remove(id: number, result: AppliedCommit, removed?: RemovedNodes) {
 		const node = this.nodes.get(id);
 		if (!node) return;
 		const parent = this.nodes.get(node.parent);
+		if (removed && parent) {
+			let positions = removed.positions.get(parent.id);
+			if (!positions) removed.positions.set(parent.id, (positions = indexOf(parent.children)));
+			const item: Removed = { key: node.key, matched: false };
+			const k = slot(node.parent, node.name, node.key);
+			const list = removed.byKey.get(k);
+			if (list) list.push(item);
+			else removed.byKey.set(k, [item]);
+			const position = positions.get(id);
+			if (position !== undefined) removed.byPosition.set(slot(node.parent, node.name, position), item);
+			removed.size++;
+		}
 		if (parent) {
 			const idx = parent.children.indexOf(id);
 			if (idx > -1) parent.children.splice(idx, 1);

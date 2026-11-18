@@ -96,3 +96,45 @@ test("edits state through the API", async ({ page }) => {
 	await page.evaluate(() => window.__PREACT_DEVTOOLS_OVERLAY__!.api!.update("Counter", "hook", 0, 41));
 	await expect(page.getByTestId("counter")).toHaveText("Hook count: 41");
 });
+
+test("explains context re-renders and names the provider", async ({ page }) => {
+	const mark = await page.evaluate(() => window.__PREACT_DEVTOOLS_OVERLAY__!.api!.mark());
+	await page.getByTestId("theme-toggle").click();
+	await expect(page.getByTestId("theme")).toHaveText("Theme: dark");
+	const result = await page.evaluate(since => {
+		const a = window.__PREACT_DEVTOOLS_OVERLAY__!.api!;
+		return { renders: a.getRenders({ since, format: "text" }), label: a.inspect("ThemeLabel") as any };
+	}, mark);
+	expect(result.renders).toMatch(/ThemeLabel #\d+ context \(Theme: "light" → "dark"\)/);
+	expect(result.label.contexts).toEqual([
+		{ name: "Theme", value: "dark", provider: { id: expect.any(Number), path: "App > ThemeProvider > Theme.Provider" } },
+	]);
+});
+
+test("flags remounts and leaked effects", async ({ page }) => {
+	await page.getByTestId("remount").click();
+	await page.getByTestId("leaky-toggle").click();
+	await expect(page.getByTestId("leaky-toggle")).toHaveText("Mount leaky ticker");
+	const result = await page.evaluate(() => {
+		const a = window.__PREACT_DEVTOOLS_OVERLAY__!.api!;
+		return { remounts: a.getRemounts({ format: "text" }), leaks: a.getLeaks({ format: "text" }) };
+	});
+	expect(result.remounts).toMatch(/App > RemountDemo > Inner remounted \(no key/);
+	expect(result.leaks).toContain("LeakyTicker: 1 effect (leakyEffect) still running after it unmounted");
+});
+
+test("lists every signal with its subscribers", async ({ page }) => {
+	const signals = await page.evaluate(() => window.__PREACT_DEVTOOLS_OVERLAY__!.api!.getSignals());
+	const remaining = (signals as any[]).find(s => s.name === "remaining");
+	expect(remaining).toMatchObject({ type: "computed", value: 1 });
+	expect(remaining.subscribers).toBeGreaterThan(0);
+	// Internal text-binding signals of @preact/signals are left out.
+	expect((signals as any[]).some(s => s.name === "ReactiveDom")).toBe(false);
+});
+
+test("?devtools=off keeps the UI out but the API in", async ({ page }) => {
+	await page.goto("/?devtools=off");
+	await api(page);
+	await page.waitForTimeout(300);
+	await expect(overlay(page)).toHaveCount(0);
+});

@@ -3,7 +3,15 @@
  * declarations don't reach into vendored code.
  */
 
-export type RenderReason = "mount" | "signal" | "hooks" | "state" | "props" | "parent" | "force";
+export type RenderReason =
+	| "mount"
+	| "signal"
+	| "hooks"
+	| "state"
+	| "props"
+	| "context"
+	| "parent"
+	| "force";
 
 export interface Change {
 	key: string;
@@ -26,6 +34,8 @@ export interface RenderLogEntry {
 	hooks?: Change[];
 	/** Signals read during the previous render whose value changed since. */
 	signals?: Change[];
+	/** Consumed contexts (`useContext`, `contextType`) whose value changed, keyed by display name. */
+	context?: Change[];
 	/** Render time of the component itself plus its subtree. */
 	durationMs: number;
 	/** @internal Used to resolve the devtools id at query time. */

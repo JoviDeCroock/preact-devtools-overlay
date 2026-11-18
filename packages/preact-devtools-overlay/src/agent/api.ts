@@ -7,6 +7,17 @@ import type { ComponentTree, TreeNode } from "./tree.js";
 import type { RenderLogEntry } from "./render-types.js";
 import type { RingBuffer } from "./ring-buffer.js";
 import type { SignalsStore, SignalUpdate } from "./signals.js";
+import type { Remount } from "./tree.js";
+import {
+	createsOnRerender,
+	isComputed,
+	isDisposed,
+	subscriberCount,
+	type OwnerRecord,
+	type RegistryEntry,
+	type SignalRegistry,
+} from "./registry.js";
+import { consumedContexts, hookList } from "./contexts.js";
 import {
 	describeChange,
 	fitToBudget,
@@ -34,6 +45,9 @@ export interface AgentApiDeps {
 	tree: ComponentTree;
 	renders: RingBuffer<RenderLogEntry>;
 	signals: SignalsStore;
+	/** All signals/computeds/effects, when `trackSignals()` ran. */
+	registry?: SignalRegistry;
+	remounts?: RingBuffer<Remount & { time: number; path: string }>;
 	getRenderers(): Iterable<RendererLike>;
 	/** Current value of the shared sequence counter, for `mark()`. */
 	currentSeq(): number;
@@ -52,7 +66,8 @@ Most queries accept { format: "text" } for a compact, token-friendly answer.
 Components
   getTree({ root?, depth?, format? })     component tree (what the Components tab shows)
   find(query, { limit? })                 [{ id, name, key, path }] matching a name or selector
-  inspect(target, { maxBytes? })          props, state, hooks, context, signals, source location
+  inspect(target, { maxBytes? })          props, state, hooks, contexts (with provider), signals,
+                                          source location
   update(target, kind, path, value)       kind: "props" | "state" | "context" (path: "a.b"),
                                           "hook" | "signal" (path: index from inspect())
 
@@ -60,13 +75,18 @@ Renders
   getRenders({ since?, last?, target?, format? })  every component render, with the reason and
                                           changed values (props, state, hooks, signals)
   whyDidRender(target, { last?, format? })  the last renders of one component
+  getRemounts({ since?, last?, format? })  components unmounted and mounted again in one commit
+                                          (unstable keys, component types created during render)
   mark()                                  cursor for { since } in getRenders/getSignalUpdates
   startRecording() / stopRecording({ format? })  renders + signal updates in between
 
 Signals (needs @preact/signals-debug, which the Vite plugin adds)
-  getSignals({ name?, format? })          known signals/computeds with value and readers
+  getSignals({ name?, limit?, format? })  every signal/computed: value, subscribers, readers,
+                                          the component that created it
   getSignalUpdates({ since?, last?, name?, format? })
   getSignalGraph()                        { nodes, links } dependency graph
+  getLeaks({ format? })                   effects still running after their component unmounted,
+                                          signals/effects created on every re-render
 
 Notes
   inspect() re-runs the component's hooks to read them (like the Components tab). Call it
@@ -74,6 +94,8 @@ Notes
   Renders are recorded from page load (last 500), signal updates too (last 2000).`;
 
 const MAX_RENDERS_DEFAULT = 50;
+/** @preact/signals' components for `{signal}` text bindings. */
+const TEXT_COMPONENTS = new Set(["_st", "ReactiveTextNode"]);
 const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 function withoutDevProps(props: Record<string, unknown> | null | undefined) {
@@ -249,15 +271,16 @@ export function createAgentApi(deps: AgentApiDeps) {
 			...(e.hooks ? { hooks: e.hooks } : {}),
 			...(e.state ? { state: e.state } : {}),
 			...(e.props ? { props: e.props } : {}),
+			...(e.context ? { context: e.context } : {}),
 			durationMs: e.durationMs,
 		};
 	}
 
 	function renderToText(r: ReturnType<typeof renderToJson>): string {
-		const changes = [...(r.signals ?? []), ...(r.hooks ?? []), ...(r.state ?? []), ...(r.props ?? [])]
+		const changes = [...(r.signals ?? []), ...(r.hooks ?? []), ...(r.state ?? []), ...(r.props ?? []), ...(r.context ?? [])]
 			.flatMap(c => describeChange(c.key, c.prev, c.next))
 			.join(", ");
-		const reason = r.reason === "force" ? "force (forceUpdate or context)" : r.reason;
+		const reason = r.reason === "force" ? "force (forceUpdate?)" : r.reason;
 		const id = r.id === null ? "" : ` #${r.id}`;
 		return `[${r.seq}] commit ${r.commit}: ${r.name}${id} ${reason}${changes ? ` (${changes})` : ""} ${r.durationMs}ms`;
 	}
@@ -296,10 +319,23 @@ export function createAgentApi(deps: AgentApiDeps) {
 			...(u.type === "update"
 				? { prev: toAgentValue(u.prevValue), next: toAgentValue(u.newValue) }
 				: {}),
-			...(u.subscribedTo ? { triggeredBy: u.subscribedTo } : {}),
+			...(u.subscribedTo ? { triggeredBy: signals.known.get(u.subscribedTo)?.name ?? u.subscribedTo } : {}),
 			...(u.recomputed ? { recomputed: true, outputChanged: !!u.outputChanged } : {}),
 			depth: u.depth,
 		};
+	}
+
+	/** signals-debug ids of @preact/signals' own signals behind `{signal}` text bindings. */
+	function textBindingIds(): Set<string> {
+		const out = new Set<string>();
+		if (!deps.registry?.installed) return out;
+		for (const { entry, obj } of deps.registry.live()) {
+			if (entry.owner && TEXT_COMPONENTS.has(entry.owner.name)) {
+				const id = debugId(obj);
+				if (id) out.add(id);
+			}
+		}
+		return out;
 	}
 
 	function getSignalUpdates(
@@ -307,8 +343,10 @@ export function createAgentApi(deps: AgentApiDeps) {
 	) {
 		if (typeof window !== "undefined") signals.sync(window);
 		const last = opts.last ?? (opts.since === undefined ? 100 : undefined);
+		const hidden = textBindingIds();
 		let rows = signals.updates
 			.read({ since: opts.since })
+			.filter(({ value }) => !hidden.has(value.update.signalId))
 			.map(({ seq, value }) => signalUpdateToJson(seq, value.update));
 		if (opts.name) rows = rows.filter(r => r.name === opts.name);
 		if (last !== undefined && rows.length > last) rows = rows.slice(rows.length - last);
@@ -356,7 +394,26 @@ export function createAgentApi(deps: AgentApiDeps) {
 		return typeof id === "string" && id.startsWith("signal_") ? id : null;
 	}
 
-	function getSignals(opts: { name?: string; format?: Format } = {}) {
+	/** Current value without running app code: a computed's cached value. */
+	function currentValue(s: any): unknown {
+		if (isComputed(s)) {
+			// `_value`; `peek()` would recompute an unobserved computed.
+			return toAgentValue(s.v);
+		}
+		try {
+			return toAgentValue(s.peek());
+		} catch {
+			return "[Unreadable]";
+		}
+	}
+
+	function owner(entry: RegistryEntry | null) {
+		if (!entry?.owner) return undefined;
+		const id = idForInstance(entry.owner.ref.deref());
+		return { id, name: entry.owner.name };
+	}
+
+	function getSignals(opts: { name?: string; limit?: number; format?: Format } = {}) {
 		if (typeof window !== "undefined") signals.sync(window);
 		type Row = {
 			id: string | null;
@@ -364,13 +421,63 @@ export function createAgentApi(deps: AgentApiDeps) {
 			type: string;
 			value?: unknown;
 			updates: number;
+			subscribers?: number;
 			readBy?: Array<{ id: number; name: string }>;
+			createdBy?: { id: number | null; name: string };
 			dependsOn?: string[];
 			disposed?: true;
 		};
-		const rows = new Map<string, Row>();
+		const rows = new Map<object | string, Row>();
+		const byDebugId = new Map<string, object | string>();
+		// signals-debug ids of @preact/signals' internal text-binding signals.
+		const hidden = new Set<string>();
+		const live = (s: any, entry: Parameters<typeof owner>[0]): Row => {
+			const computed = isComputed(s);
+			const row: Row = {
+				id: debugId(s),
+				name: signalName(s) ?? (computed ? "(anonymous computed)" : "(anonymous signal)"),
+				type: computed ? "computed" : "signal",
+				value: currentValue(s),
+				updates: 0,
+				subscribers: subscriberCount(s),
+			};
+			const by = owner(entry);
+			if (by) row.createdBy = by;
+			if (row.id) byDebugId.set(row.id, s);
+			return row;
+		};
+
+		// 1. Everything created since page load (needs trackSignals()).
+		if (deps.registry?.installed) {
+			for (const { entry, obj } of deps.registry.live()) {
+				if (entry.kind !== "signal") continue;
+				// @preact/signals' own signals behind `{signal}` text bindings.
+				if (entry.owner && TEXT_COMPONENTS.has(entry.owner.name)) {
+					const id = debugId(obj);
+					if (id) hidden.add(id);
+					continue;
+				}
+				rows.set(obj, live(obj, entry));
+			}
+		}
+		// 2. Signals mounted components read.
+		for (const [signal, readers] of componentReaders()) {
+			const row = rows.get(signal) ?? live(signal, null);
+			row.readBy = readers;
+			rows.set(signal, row);
+		}
+		// 3. What signals-debug reported: update counts, dependencies, and
+		// signals we haven't seen otherwise.
 		for (const k of signals.known.values()) {
-			if (k.type === "effect" || k.type === "component") continue;
+			if (k.type === "effect" || k.type === "component" || hidden.has(k.id)) continue;
+			const key = byDebugId.get(k.id);
+			const row = key !== undefined ? rows.get(key) : undefined;
+			if (row) {
+				row.updates = k.updates;
+				if (k.dependencies.length) row.dependsOn = k.dependencies;
+				if (k.disposed && !row.subscribers) row.disposed = true;
+				continue;
+			}
 			rows.set(k.id, {
 				id: k.id,
 				name: k.name,
@@ -381,38 +488,169 @@ export function createAgentApi(deps: AgentApiDeps) {
 				...(k.disposed ? { disposed: true as const } : {}),
 			});
 		}
-		let anon = 0;
-		for (const [signal, readers] of componentReaders()) {
-			const s = signal as any;
-			const id = debugId(s);
-			const key = id ?? `live:${anon++}`;
-			const row: Row = rows.get(key) ?? {
-				id,
-				name: signalName(s) ?? (typeof s.x === "function" ? "(anonymous computed)" : "(anonymous signal)"),
-				type: typeof s.x === "function" ? "computed" : "signal",
-				updates: 0,
-			};
-			try {
-				row.value = toAgentValue(s.peek());
-			} catch {
-				// keep the last reported value
-			}
-			row.readBy = readers;
-			rows.set(key, row);
-		}
+
 		let list = [...rows.values()];
 		if (opts.name) list = list.filter(r => r.name === opts.name);
+		const limit = opts.limit ?? 200;
+		const more = Math.max(0, list.length - limit);
+		if (more) list = list.slice(0, limit);
 		if (opts.format === "text") {
-			if (!list.length) return signals.api ? "(no signals seen yet)" : "(@preact/signals-debug is not loaded)";
+			if (!list.length) return signals.api || deps.registry?.installed ? "(no signals seen yet)" : "(@preact/signals-debug is not loaded)";
+			return (
+				list
+					.map(r => {
+						const readers = r.readBy ? `, read by ${r.readBy.map(x => `${x.name} #${x.id}`).join(", ")}` : "";
+						const created = r.createdBy ? `, created by ${r.createdBy.name}${r.createdBy.id !== null ? ` #${r.createdBy.id}` : ""}` : "";
+						const subs = r.subscribers !== undefined ? `, ${r.subscribers} subscribers` : "";
+						const value = "value" in r ? ` = ${preview(r.value, 60)}` : "";
+						return `${r.name}${value} (${r.type}, ${r.updates} updates${subs}${readers}${created})${r.disposed ? " [disposed]" : ""}`;
+					})
+					.join("\n") + (more ? `\n… ${more} more (pass { limit })` : "")
+			);
+		}
+		return list;
+	}
+
+	function getLeaks(opts: { format?: Format } = {}) {
+		type Leak = {
+			problem: "outlived-component" | "created-on-rerender";
+			/** `id` is null once the component has unmounted. */
+			owner: { id: number | null; name: string };
+			kind: "effect" | "signal" | "computed";
+			count: number;
+			names: string[];
+			/** created-on-rerender: re-renders that created something / all re-renders. */
+			rerenders?: { creating: number; total: number };
+		};
+		const groups = new Map<string, Leak>();
+		// What each owner's hooks hold (`useMemo`, `useRef`, `useState`): a
+		// signal kept there was memoized, even if the memo was recomputed.
+		const heldCache = new Map<OwnerRecord, Set<unknown>>();
+		const held = (own: OwnerRecord) => {
+			let set = heldCache.get(own);
+			if (set) return set;
+			set = new Set();
+			for (const state of hookList(own.ref.deref()) ?? []) {
+				const value = state?._value !== undefined ? state._value : state?.__;
+				const values = Array.isArray(value)
+					? value
+					: value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype
+						? Object.values(value)
+						: [value];
+				for (const v of values) set.add(v);
+			}
+			heldCache.set(own, set);
+			return set;
+		};
+		// Per owner and kind: a memoized computed doesn't excuse a leaking effect.
+		const memoized = new Set<string>();
+		const kindOf = (entry: RegistryEntry, obj: unknown) =>
+			entry.kind === "effect" ? "effect" : isComputed(obj) ? "computed" : "signal";
+		if (deps.registry?.installed) {
+			deps.registry.prune();
+			for (const { entry, obj } of deps.registry.live()) {
+				if (entry.createdOnRerender && entry.owner && held(entry.owner).has(obj)) {
+					memoized.add(`${entry.owner.seq}:${kindOf(entry, obj)}`);
+				}
+			}
+			for (const { entry, obj } of deps.registry.live()) {
+				const own = entry.owner;
+				if (!own || TEXT_COMPONENTS.has(own.name)) continue;
+				const kind = kindOf(entry, obj);
+				const disposed = isDisposed(obj);
+				let problem: Leak["problem"] | null = null;
+				if (kind === "effect" && own.unmounted && !disposed) problem = "outlived-component";
+				else if (
+					entry.createdOnRerender &&
+					!disposed &&
+					!own.unmounted &&
+					!memoized.has(`${own.seq}:${kind}`) &&
+					createsOnRerender(own)
+				) {
+					problem = "created-on-rerender";
+				}
+				if (!problem) continue;
+				// One group per component instance.
+				const key = `${problem}:${kind}:${own.seq}`;
+				let leak = groups.get(key);
+				if (!leak) {
+					leak = {
+						problem,
+						owner: { id: idForInstance(own.ref.deref()), name: own.name },
+						kind,
+						count: 0,
+						names: [],
+						...(problem === "created-on-rerender"
+							? { rerenders: { creating: own.rerendersWithCreation, total: own.rerenders } }
+							: {}),
+					};
+					groups.set(key, leak);
+				}
+				leak.count++;
+				const name = signalName(obj);
+				if (name && leak.names.length < 5 && !leak.names.includes(name)) leak.names.push(name);
+			}
+		}
+		const list = [...groups.values()];
+		if (opts.format === "text") {
+			if (!deps.registry?.installed) return "(signal tracking is off: call trackSignals(), the Vite plugin does this)";
+			if (!list.length) return "(no leaks found)";
 			return list
-				.map(r => {
-					const readers = r.readBy ? `, read by ${r.readBy.map(x => `${x.name} #${x.id}`).join(", ")}` : "";
-					const value = "value" in r ? ` = ${preview(r.value, 60)}` : "";
-					return `${r.name}${value} (${r.type}, ${r.updates} updates${readers})${r.disposed ? " [disposed]" : ""}`;
+				.map(l => {
+					const what = `${l.count} ${l.kind}${l.count === 1 ? "" : "s"}${l.names.length ? ` (${l.names.join(", ")})` : ""}`;
+					const who = `${l.owner.name}${l.owner.id !== null ? ` #${l.owner.id}` : ""}`;
+					return l.problem === "outlived-component"
+						? `${who}: ${what} still running after it unmounted. Dispose it in a cleanup, or use useSignalEffect().`
+						: `${who}: ${what} alive, created during ${l.rerenders!.creating} of its ${l.rerenders!.total} re-renders. Create it once: useSignal(), useComputed(), useSignalEffect() or useMemo().`;
 				})
 				.join("\n");
 		}
 		return list;
+	}
+
+	function getRemounts(opts: { since?: number; last?: number; format?: Format } = {}) {
+		const last = opts.last ?? (opts.since === undefined ? 50 : undefined);
+		let rows = (deps.remounts?.read({ since: opts.since }) ?? []).map(({ seq, value }) => ({
+			seq,
+			time: Math.round(value.time),
+			id: tree.get(value.id) ? value.id : null,
+			name: value.name,
+			path: value.path,
+			prevKey: value.prevKey,
+			key: value.key,
+		}));
+		if (last !== undefined && rows.length > last) rows = rows.slice(rows.length - last);
+		if (opts.format === "text") {
+			if (!rows.length) return "(no remounts recorded)";
+			return rows
+				.map(r => {
+					const why =
+						r.prevKey !== r.key
+							? `key ${JSON.stringify(r.prevKey)} → ${JSON.stringify(r.key)}`
+							: r.key
+								? `same key ${JSON.stringify(r.key)}: is the component type created during render?`
+								: "no key: is the component type created during render, or the list unkeyed?";
+					return `[${r.seq}] ${r.path} remounted (${why})`;
+				})
+				.join("\n");
+		}
+		return rows;
+	}
+
+	function contextsOf(vnode: any) {
+		const c = vnode?.__c ?? vnode?._component;
+		if (!c) return null;
+		const out = [...consumedContexts(c, hookList(c)).values()].map(x => {
+			const providerId = x.provider ? idForInstance(x.provider) : null;
+			return {
+				name: x.name,
+				value: toAgentValue(x.value),
+				provider: x.provider
+					? { id: providerId, path: providerId !== null ? tree.path(providerId).join(" > ") : null }
+					: null,
+			};
+		});
+		return out.length ? out : null;
 	}
 
 	function getSignalGraph() {
@@ -574,6 +812,7 @@ export function createAgentApi(deps: AgentApiDeps) {
 			state: toAgentValue(state) ?? null,
 			hooks,
 			signals: liveSignals(vnode),
+			contexts: contextsOf(vnode),
 			context: toAgentValue(withoutInternalContext(c?.context)) ?? null,
 			...(data?.canSuspend ? { suspended: data.suspended } : {}),
 		};
@@ -666,6 +905,8 @@ export function createAgentApi(deps: AgentApiDeps) {
 		getSignals,
 		getSignalUpdates,
 		getSignalGraph,
+		getLeaks,
+		getRemounts,
 
 		/** Diagnostics: what is (not) connected. */
 		status() {
@@ -678,6 +919,7 @@ export function createAgentApi(deps: AgentApiDeps) {
 				asyncTree: deps.asyncTree,
 				renders: { buffered: renders.size, dropped: renders.dropped },
 				signalUpdates: { buffered: signals.updates.size, dropped: signals.updates.dropped },
+				signalTracking: !!deps.registry?.installed,
 			};
 		},
 	};

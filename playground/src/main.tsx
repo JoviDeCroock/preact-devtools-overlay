@@ -1,6 +1,6 @@
-import { Component, render } from "preact";
-import { useState } from "preact/hooks";
-import { signal, computed, useSignal } from "@preact/signals";
+import { Component, createContext, render, type ComponentChildren } from "preact";
+import { useContext, useState } from "preact/hooks";
+import { signal, computed, effect, useSignal } from "@preact/signals";
 
 const todos = signal([
 	{ id: 1, text: "Inspect a component", done: false },
@@ -85,6 +85,63 @@ function TodoItem({ todo }: { todo: { id: number; text: string; done: boolean } 
 	);
 }
 
+// Things the devtools should point out: a context change, an effect that
+// outlives its component, and a component type created during render.
+const Theme = createContext("light");
+Theme.displayName = "Theme";
+
+function ThemeProvider({ children }: { children: ComponentChildren }) {
+	const [theme, setTheme] = useState("light");
+	return (
+		<Theme.Provider value={theme}>
+			<button
+				data-testid="theme-toggle"
+				onClick={() => setTheme(t => (t === "light" ? "dark" : "light"))}
+			>
+				Toggle theme
+			</button>{" "}
+			{children}
+		</Theme.Provider>
+	);
+}
+
+function ThemeLabel() {
+	const theme = useContext(Theme);
+	return <span data-testid="theme">Theme: {theme}</span>;
+}
+
+function LeakyTicker() {
+	// Bug on purpose: a new effect on every render, never disposed.
+	effect(() => void todos.value.length, { name: "leakyEffect" });
+	return <span>Leaky ticker</span>;
+}
+
+function LeakyDemo() {
+	const [show, setShow] = useState(true);
+	return (
+		<p>
+			<button data-testid="leaky-toggle" onClick={() => setShow(s => !s)}>
+				{show ? "Unmount" : "Mount"} leaky ticker
+			</button>{" "}
+			{show && <LeakyTicker />}
+		</p>
+	);
+}
+
+function RemountDemo() {
+	const [n, setN] = useState(0);
+	// Bug on purpose: a new component type on every render remounts it.
+	const Inner = () => <span>Inner {n}</span>;
+	return (
+		<p>
+			<button data-testid="remount" onClick={() => setN(n + 1)}>
+				Re-render
+			</button>{" "}
+			<Inner />
+		</p>
+	);
+}
+
 // `?rows=200` renders extra components, e.g. to exercise the virtualized tree.
 const extraRows = Number(new URLSearchParams(location.search).get("rows")) || 0;
 
@@ -109,6 +166,12 @@ function App() {
 					<TodoItem key={t.id} todo={t} />
 				))}
 			</ul>
+			<h2>Diagnostics</h2>
+			<ThemeProvider>
+				<ThemeLabel />
+			</ThemeProvider>
+			<LeakyDemo />
+			<RemountDemo />
 			{extraRows > 0 && (
 				<ol>
 					{Array.from({ length: extraRows }, (_, i) => (

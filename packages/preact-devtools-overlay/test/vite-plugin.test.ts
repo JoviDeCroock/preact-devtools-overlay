@@ -96,6 +96,28 @@ describe("preactDevtoolsOverlay()", () => {
 		expect(await configFor({ agentApi: false }, "serve")).toContain(`"agentApi":false`);
 	});
 
+	it("tracks signal construction with the app's signals package", async () => {
+		const withSignals = path.resolve(import.meta.dirname, "../../../playground");
+		const { code, config } = await entryFor({}, withSignals);
+		expect(code).toContain(
+			`import { Signal as __pdoSignal, effect as __pdoEffect, computed as __pdoComputed } from "@preact/signals";`,
+		);
+		expect(code.indexOf("trackSignals(")).toBeGreaterThan(code.indexOf("configureSignalsDebug("));
+		expect(config.optimizeDeps.include).toContain("@preact/signals");
+		const { code: off } = await entryFor({ agentApi: false }, withSignals);
+		expect(off).not.toContain("trackSignals");
+	});
+
+	it("supports compact signals console logging", async () => {
+		const { code } = await entryFor({ signals: true, signalsConsoleLogging: "compact" });
+		expect(code).toContain(`{ consoleLogging: "compact" }`);
+	});
+
+	it("skips the overlay UI with ?devtools=off", async () => {
+		const { code } = await entryFor({ signals: false });
+		expect(code).toMatch(/if \(!\/\[\?&\]devtools=off\(&\|\$\)\/\.test\(location\.search\)\) import\(/);
+	});
+
 	it("auto-detects signals from the project root", async () => {
 		const withSignals = path.resolve(import.meta.dirname, "../../../playground");
 		const { code, config } = await entryFor({}, withSignals);

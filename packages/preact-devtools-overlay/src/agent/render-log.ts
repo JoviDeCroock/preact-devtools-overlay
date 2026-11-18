@@ -13,6 +13,8 @@ import type { PreactBindings } from "../../vendor/preact-devtools/src/adapter/sh
 import type { RendererConfig } from "../../vendor/preact-devtools/src/adapter/shared/renderer";
 import { signalName, toAgentValue, type ValueLimits } from "./values.js";
 import type { Change, RenderLogEntry, RenderReason } from "./render-types.js";
+import type { RenderContext } from "./registry.js";
+import { consumedContexts } from "./contexts.js";
 
 export type { Change, RenderLogEntry, RenderReason };
 
@@ -21,6 +23,14 @@ interface Snapshot {
 	state: Record<string, unknown> | null;
 	hooks: Map<number, unknown>;
 	signals: Map<object, { version: number; value: unknown }>;
+	contexts: Map<object, { name: string; value: unknown }>;
+}
+
+export interface RenderObserver {
+	/** Updated while a component renders; read by the signal registry. */
+	rendering?: RenderContext;
+	onRerender?(component: object): void;
+	onUnmount?(component: object): void;
 }
 
 const CHANGE_LIMITS: ValueLimits = { depth: 2, breadth: 10, string: 120 };
@@ -88,19 +98,51 @@ export interface RenderInstrumentation {
  * Hooks into `options` of one Preact copy. Must be called after the
  * devtools adapter installed its own hooks (`hook.attachPreact`).
  */
+const SUSPENDING = Symbol("preact-devtools-overlay:suspending");
+
+/**
+ * Wraps pending `useEffect` callbacks (hook state `_value`, mangled `__`) so
+ * nothing they create is attributed to the component rendering meanwhile.
+ */
+function suspendDuring(pendingEffects: unknown, rendering: RenderContext) {
+	if (!Array.isArray(pendingEffects)) return;
+	for (const state of pendingEffects) {
+		const fn = state?.__;
+		if (typeof fn !== "function" || fn[SUSPENDING]) continue;
+		const wrapped = function (this: unknown, ...args: unknown[]) {
+			rendering.suspended++;
+			try {
+				return fn.apply(this, args);
+			} finally {
+				rendering.suspended--;
+			}
+		};
+		(wrapped as any)[SUSPENDING] = true;
+		Object.defineProperty(wrapped, "name", { value: fn.name });
+		state.__ = wrapped;
+	}
+}
+
 export function instrumentRenders(
 	options: Options,
 	config: RendererConfig,
 	bindings: PreactBindings<any>,
 	onCommit: (entries: RenderLogEntry[]) => void,
 	nextCommit: () => number,
+	observer: RenderObserver = {},
 ): RenderInstrumentation {
+	const rendering = observer.rendering;
 	const o = options as any;
-	const prevRoot = o._root || o.__;
-	const prevRender = o._render || o.__r;
+	// Mangled names only: Preact's builds only read those. Never set the
+	// unmangled ones (`_hook`): the devtools adapter prefers them when it
+	// re-wraps, and a stale one would cut @preact/signals out of the chain.
+	const prevRoot = o.__;
+	const prevDiff = o.__b;
+	const prevRender = o.__r;
 	const prevDiffed = options.diffed;
-	const prevCommit = o._commit || o.__c;
+	const prevCommit = o.__c;
 	const prevUnmount = options.unmount;
+	const prevCatchError = o.__e;
 
 	const snapshots = new WeakMap<object, Snapshot>();
 	// Weak: a render that throws never reaches `diffed`, and its component
@@ -109,23 +151,69 @@ export function instrumentRenders(
 	let pending: RenderLogEntry[] = [];
 	const hasWeakRef = typeof WeakRef !== "undefined";
 
+	const notRendering = () => {
+		if (rendering) {
+			rendering.component = null;
+			rendering.name = null;
+		}
+	};
+
 	const root = (vnode: any, parent: any) => {
 		// A new `render()` call. Anything still pending belongs to a render
 		// that threw before it committed.
 		pending = [];
+		notRendering();
 		if (prevRoot) prevRoot(vnode, parent);
+	};
+
+	const diff = (vnode: any) => {
+		// Before a class component's constructor runs: anything it creates
+		// must not be attributed to whatever rendered last.
+		notRendering();
+		if (prevDiff) prevDiff(vnode);
 	};
 
 	const render = (vnode: any, parent: any) => {
 		const type = vnode.type;
 		if (typeof type === "function" && type !== config.Fragment) {
 			const c = bindings.getComponent(vnode);
-			if (c) renderStart.set(c, performance.now());
+			if (c) {
+				renderStart.set(c, performance.now());
+				if (rendering) {
+					const firstRender = !snapshots.has(c);
+					rendering.render++;
+					rendering.firstRender = firstRender;
+					if (!firstRender) {
+						try {
+							observer.onRerender?.(c);
+						} catch {
+							// ignore
+						}
+					}
+					let name: string | null = null;
+					try {
+						name = bindings.getDisplayName(vnode, config);
+					} catch {
+						// ignore
+					}
+					// preact/hooks runs the effects still pending from the last
+					// render in its render hook, before or after this one. What
+					// they create isn't the render's doing.
+					suspendDuring((c.__hooks ?? c.__H)?.__h, rendering);
+					rendering.component = c;
+					rendering.name = name;
+					if (prevRender) prevRender(vnode, parent);
+					return;
+				}
+			}
 		}
 		if (prevRender) prevRender(vnode, parent);
 	};
 
 	const diffed = (vnode: any) => {
+		// The component's own render function has returned long ago (its
+		// children render in between); nothing is rendering now.
+		notRendering();
 		if (prevDiffed) prevDiffed(vnode);
 
 		const type = vnode.type;
@@ -164,6 +252,7 @@ export function instrumentRenders(
 			state,
 			hooks,
 			signals: trackedSignals(c),
+			contexts: consumedContexts(c, list),
 		};
 		const prev = snapshots.get(c);
 		snapshots.set(c, next);
@@ -205,14 +294,23 @@ export function instrumentRenders(
 		}
 		const stateChanges = prev.state || next.state ? shallowChanges(prev.state, next.state) : [];
 		const propChanges = prev.props !== next.props ? shallowChanges(prev.props, next.props) : [];
+		const contextChanges: Change[] = [];
+		for (const [ctx, now] of next.contexts) {
+			const before = prev.contexts.get(ctx);
+			if (before && !Object.is(before.value, now.value)) {
+				contextChanges.push(change(now.name, before.value, now.value));
+			}
+		}
 
 		if (signals.length) (entry.signals = signals), entry.reasons.push("signal");
 		if (hookChanges.length) (entry.hooks = hookChanges), entry.reasons.push("hooks");
 		if (stateChanges.length) (entry.state = stateChanges), entry.reasons.push("state");
 		if (propChanges.length) (entry.props = propChanges), entry.reasons.push("props");
+		if (contextChanges.length) (entry.context = contextChanges), entry.reasons.push("context");
 		if (entry.reasons.length === 0) {
 			// Same values: either the parent re-rendered and passed equal props,
-			// or the component was force-updated (forceUpdate, a context change).
+			// or the component was force-updated (forceUpdate, or a context we
+			// couldn't see, e.g. one consumed by a custom hook's own component).
 			entry.reasons.push(prev.props !== next.props ? "parent" : "force");
 		}
 		entry.reason = entry.reasons[0];
@@ -220,6 +318,7 @@ export function instrumentRenders(
 	};
 
 	const commit = (vnode: any, queue: any) => {
+		notRendering();
 		// Flush before calling on: the previous hooks run layout effects and
 		// callbacks, which can render (and commit) again.
 		if (pending.length > 0) {
@@ -237,30 +336,46 @@ export function instrumentRenders(
 		if (prevCommit) prevCommit(vnode, queue);
 	};
 
+	const catchError = (error: any, vnode: any, oldVNode: any, errorInfo: any) => {
+		// A render threw: it never reaches `diffed`.
+		notRendering();
+		return prevCatchError(error, vnode, oldVNode, errorInfo);
+	};
+
 	const unmount = (vnode: any) => {
 		if (typeof vnode.type === "function") {
 			const c = bindings.getComponent(vnode);
 			if (c) {
 				snapshots.delete(c);
 				renderStart.delete(c);
+				try {
+					observer.onUnmount?.(c);
+				} catch {
+					// ignore
+				}
 			}
 		}
 		if (prevUnmount) prevUnmount(vnode);
 	};
 
-	o._root = o.__ = root;
-	o._render = o.__r = render;
+	o.__ = root;
+	if (rendering) o.__b = diff;
+	o.__r = render;
 	options.diffed = diffed;
-	o._commit = o.__c = commit;
+	o.__c = commit;
 	options.unmount = unmount;
+	// Preact always has one (it rethrows when no boundary catches).
+	if (rendering && typeof prevCatchError === "function") o.__e = catchError;
 
 	return {
 		teardown() {
-			if (o.__ === root) o._root = o.__ = prevRoot;
-			if (o.__r === render) o._render = o.__r = prevRender;
+			if (o.__ === root) o.__ = prevRoot;
+			if (o.__b === diff) o.__b = prevDiff;
+			if (o.__r === render) o.__r = prevRender;
 			if (options.diffed === diffed) options.diffed = prevDiffed;
-			if (o.__c === commit) o._commit = o.__c = prevCommit;
+			if (o.__c === commit) o.__c = prevCommit;
 			if (options.unmount === unmount) options.unmount = prevUnmount;
+			if (o.__e === catchError) o.__e = prevCatchError;
 		},
 	};
 }
