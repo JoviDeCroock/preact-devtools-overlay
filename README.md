@@ -200,9 +200,9 @@ Releases go through [changesets](https://github.com/changesets/changesets):
 1. Every PR that changes the package adds a changeset (`pnpm changeset`).
 2. On `main`, the Release workflow keeps a "Version Packages" PR open that
    bumps the version and writes `CHANGELOG.md`.
-3. Merging that PR runs the `publish` job in the `npm` environment (needs
-   approval). It *stages* the new version on npm via trusted publishing
-   (OIDC, no token) and creates the git tag and GitHub release.
+3. Merging that PR runs the `publish` job in the `npm` environment (only
+   allowed from `main`). It *stages* the new version on npm via trusted
+   publishing (OIDC, no token) and creates the git tag and GitHub release.
 4. Approve the staged version with `npm stage approve <stage-id>` (the id is
    in the job log).
 
