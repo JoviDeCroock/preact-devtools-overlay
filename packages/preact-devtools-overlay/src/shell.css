@@ -1,0 +1,215 @@
+:host {
+	--pdo-accent: #673ab8;
+	--pdo-bg: #fff;
+	--pdo-fg: #333;
+	--pdo-muted: #6b6b76;
+	--pdo-border: #dedede;
+	--pdo-hover: #f2edfa;
+	--pdo-z: 2147483000;
+	all: initial;
+	position: fixed;
+	z-index: var(--pdo-z);
+	font: 12px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+	:host {
+		--pdo-bg: #242424;
+		--pdo-fg: #e0e0e0;
+		--pdo-muted: #9a9aa5;
+		--pdo-border: #3a3a3a;
+		--pdo-hover: #2f2a3a;
+	}
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+[hidden] {
+	display: none !important;
+}
+
+button {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	margin: 0;
+	padding: 0;
+	cursor: pointer;
+}
+
+button:focus-visible {
+	outline: 2px solid var(--pdo-accent);
+	outline-offset: -2px;
+}
+
+.launcher {
+	position: fixed;
+	z-index: var(--pdo-z);
+	width: 2.5rem;
+	height: 2.5rem;
+	display: grid;
+	place-items: center;
+	border-radius: 50%;
+	color: var(--pdo-accent);
+	background: var(--pdo-bg);
+	box-shadow:
+		0 1px 2px rgb(0 0 0 / 0.2),
+		0 4px 12px rgb(0 0 0 / 0.15);
+	transition: transform 120ms ease-out;
+}
+
+.launcher:hover {
+	transform: scale(1.06);
+}
+
+.launcher:focus-visible {
+	outline-offset: 2px;
+}
+
+.launcher[data-position="bottom-right"] { right: 1rem; bottom: 1rem; }
+.launcher[data-position="bottom-left"] { left: 1rem; bottom: 1rem; }
+.launcher[data-position="top-right"] { right: 1rem; top: 1rem; }
+.launcher[data-position="top-left"] { left: 1rem; top: 1rem; }
+
+.launcher[aria-expanded="true"] {
+	display: none;
+}
+
+.drawer {
+	position: fixed;
+	z-index: var(--pdo-z);
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: var(--pdo-height, 40vh);
+	display: flex;
+	flex-direction: column;
+	background: var(--pdo-bg);
+	color: var(--pdo-fg);
+	border-top: 1px solid var(--pdo-border);
+	box-shadow: 0 -4px 16px rgb(0 0 0 / 0.12);
+}
+
+.resize-handle {
+	position: absolute;
+	top: -4px;
+	left: 0;
+	right: 0;
+	height: 8px;
+	cursor: ns-resize;
+	touch-action: none;
+	/* Above the tab buttons, which are positioned (for their underline). */
+	z-index: 1;
+}
+
+.resize-handle:hover,
+.drawer.resizing .resize-handle {
+	background: linear-gradient(
+		to bottom,
+		transparent 3px,
+		var(--pdo-accent) 3px,
+		var(--pdo-accent) 5px,
+		transparent 5px
+	);
+}
+
+.drawer.resizing {
+	user-select: none;
+}
+
+.drawer.resizing .panes {
+	pointer-events: none;
+}
+
+.bar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+	height: 2rem;
+	padding: 0 0.25rem 0 0.5rem;
+	border-bottom: 1px solid var(--pdo-border);
+}
+
+.brand {
+	display: grid;
+	place-items: center;
+	color: var(--pdo-accent);
+	margin-right: 0.25rem;
+}
+
+.brand svg {
+	width: 16px;
+	height: 16px;
+}
+
+.tabs {
+	display: flex;
+	align-self: stretch;
+	flex: 1;
+}
+
+.tab {
+	position: relative;
+	padding: 0 0.75rem;
+	color: var(--pdo-muted);
+	font-weight: 500;
+}
+
+.tab:hover {
+	color: var(--pdo-fg);
+	background: var(--pdo-hover);
+}
+
+.tab[aria-selected="true"] {
+	color: var(--pdo-fg);
+}
+
+.tab[aria-selected="true"]::after {
+	content: "";
+	position: absolute;
+	left: 0.5rem;
+	right: 0.5rem;
+	bottom: -1px;
+	height: 2px;
+	border-radius: 2px 2px 0 0;
+	background: var(--pdo-accent);
+}
+
+.close {
+	display: grid;
+	place-items: center;
+	width: 1.75rem;
+	height: 1.75rem;
+	border-radius: 4px;
+	color: var(--pdo-muted);
+}
+
+.close:hover {
+	color: var(--pdo-fg);
+	background: var(--pdo-hover);
+}
+
+.panes {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+}
+
+.pane {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.launcher {
+		transition: none;
+	}
+}

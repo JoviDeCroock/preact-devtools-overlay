@@ -1,0 +1,29 @@
+{
+	"$comment": "Pinned upstream sources that are vendored into packages/preact-devtools-overlay/vendor. Update the refs and run `pnpm sync-upstream`.",
+	"preact-devtools": {
+		"repo": "https://github.com/preactjs/preact-devtools.git",
+		"ref": "5a4eecd233ad2eac082bcd6c5e71edf52785cb4a",
+		"dest": "packages/preact-devtools-overlay/vendor/preact-devtools",
+		"patches": "patches/preact-devtools",
+		"copy": {
+			"LICENSE": "LICENSE",
+			"src/adapter": "src/adapter",
+			"src/view": "src/view",
+			"src/constants.ts": "src/constants.ts",
+			"src/debug.ts": "src/debug.ts",
+			"src/global.d.ts": "src/global.d.ts",
+			"src/shells/shared/utils.ts": "src/shells/shared/utils.ts"
+		}
+	},
+	"signals": {
+		"repo": "https://github.com/preactjs/signals.git",
+		"ref": "395fd7ebd440cbc4d1ced05b4b498b08f3ed33d0",
+		"dest": "packages/preact-devtools-overlay/vendor/signals-devtools",
+		"patches": "patches/signals",
+		"copy": {
+			"LICENSE": "LICENSE",
+			"packages/devtools-ui/src": "devtools-ui/src",
+			"packages/devtools-adapter/src": "devtools-adapter/src"
+		}
+	}
+}

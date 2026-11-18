@@ -1,0 +1,16 @@
+{
+	// Type-checks the *published* declarations (dist/types) the way a strict
+	// consumer would. Run after `pnpm build` via `pnpm test:types`.
+	"compilerOptions": {
+		"target": "ES2022",
+		"lib": ["ES2022", "DOM"],
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": false,
+		"noUncheckedSideEffectImports": true,
+		"types": []
+	},
+	"files": ["index.ts"]
+}

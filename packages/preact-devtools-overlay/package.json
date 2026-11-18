@@ -1,0 +1,69 @@
+{
+	"name": "preact-devtools-overlay",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Preact Devtools and Preact Signals Devtools in a single in-page web component, with a Vite plugin to inject it.",
+	"license": "MIT",
+	"type": "module",
+	"sideEffects": [
+		"./dist/client.js",
+		"./dist/auto.js"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/types/src/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./auto": {
+			"types": "./dist/types/src/auto.d.ts",
+			"import": "./dist/auto.js"
+		},
+		"./client": {
+			"types": "./dist/types/src/client.d.ts",
+			"import": "./dist/client.js"
+		},
+		"./vite": {
+			"types": "./dist/types/src/vite.d.ts",
+			"import": "./dist/vite.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist",
+		"vendor/*/LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"build": "node build.mjs",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"test:types": "tsc -p test/types-consumer"
+	},
+	"dependencies": {
+		"@preact/signals-debug": "^1.5.0"
+	},
+	"peerDependencies": {
+		"@preact/signals-core": ">=1.12.2",
+		"preact": "10.x || 11.x",
+		"vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
+	},
+	"peerDependenciesMeta": {
+		"@preact/signals-core": {
+			"optional": true
+		},
+		"vite": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@preact/signals": "2.11.4",
+		"@types/node": "^22.0.0",
+		"errorstacks": "^2.4.2",
+		"jsdom": "^31.0.1",
+		"lightningcss": "^1.33.0",
+		"preact": "10.29.8",
+		"typescript": "^5.9.0",
+		"vite": "^8.3.8",
+		"vitest": "^5.1.0"
+	}
+}
