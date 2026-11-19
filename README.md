@@ -355,4 +355,5 @@ Releases go through [changesets](https://github.com/changesets/changesets):
 ## License
 
 MIT. Vendored code keeps its upstream MIT license, see
+[NOTICE.md](./NOTICE.md) and
 `packages/preact-devtools-overlay/vendor/*/LICENSE`.

@@ -1,0 +1,49 @@
+name: Bug report
+description: Something doesn't work as expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Link to a minimal repo or a page that shows the bug.
+      placeholder: https://github.com/
+    validations:
+      required: true
+  - type: input
+    id: preact
+    attributes:
+      label: preact
+      description: Version.
+      placeholder: 10.29.8
+    validations:
+      required: true
+  - type: input
+    id: overlay
+    attributes:
+      label: preact-devtools-overlay
+      description: Version.
+    validations:
+      required: true
+  - type: input
+    id: vite
+    attributes:
+      label: vite
+      description: Version, or n/a.
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      description: Name and version.
+      placeholder: Chrome 131
+    validations:
+      required: true

@@ -57,6 +57,7 @@
 		"dist",
 		"vendor/*/LICENSE",
 		"LICENSE",
+		"NOTICE.md",
 		"README.md",
 		"AGENTS.md"
 	],
