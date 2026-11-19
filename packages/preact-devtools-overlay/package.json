@@ -87,7 +87,7 @@
 	},
 	"devDependencies": {
 		"@preact/signals": "2.11.4",
-		"@types/node": "^22.0.0",
+		"@types/node": "^26.6.6",
 		"errorstacks": "^2.4.2",
 		"jsdom": "^31.0.1",
 		"lightningcss": "^1.33.0",
