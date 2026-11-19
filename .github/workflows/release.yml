@@ -44,7 +44,7 @@ jobs:
       # Opens/updates the "Version Packages" PR while there are pending changesets.
       - name: Create Release Pull Request
         id: changesets
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           version: pnpm run version
           commitMode: github-api
@@ -111,7 +111,7 @@ jobs:
       # Packages are *staged*, not published: approve them with
       # `npm stage approve <stage-id>` (the id is printed in the log).
       - name: Publish packages
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           publish: node .github/scripts/stage-packages.mjs
           createGithubReleases: true
