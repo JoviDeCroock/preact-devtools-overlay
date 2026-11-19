@@ -35,4 +35,4 @@ this package for recipes. Agents without a browser can use the MCP server:
 
 See the repository README for usage without Vite, options, and how it works.
 Contains code vendored from preactjs/preact-devtools and preactjs/signals
-(MIT), see `vendor/*/LICENSE`.
+(MIT), see `NOTICE.md` and `vendor/*/LICENSE`.
